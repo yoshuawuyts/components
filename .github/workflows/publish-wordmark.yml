@@ -18,6 +18,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
+      attestations: write
       packages: write
       contents: read
 
@@ -83,3 +85,11 @@ jobs:
           source: ${{ env.COMPONENT_SOURCE }}
           homepage: ${{ env.COMPONENT_HOMEPAGE }}
           licenses: ${{ env.COMPONENT_LICENSES }}
+
+      - name: Attest build provenance
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ env.IMAGE_NAME }}/${{ env.COMPONENT_NAME }}
+          subject-digest: ${{ steps.publish_versioned.outputs.digest }}
+          push-to-registry: true
