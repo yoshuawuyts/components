@@ -1,20 +1,3 @@
-[package]
-name = "components"
-version = "1.0.0"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/yoshuawuyts/components"
-documentation = "https://docs.rs/components"
-description = "Wasm Components"
-readme = "README.md"
-edition = "2018"
-keywords = []
-categories = []
-authors = [
-    "Yoshua Wuyts <rust@yosh.is>"
-]
-
-[features]
-
-[dependencies]
-
-[dev-dependencies]
+[workspace]
+members = ["components/*"]
+resolver = "2"
