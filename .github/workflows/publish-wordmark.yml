@@ -18,39 +18,34 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write
       packages: write
       contents: read
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@v1.10.15
 
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.actor }}/${{ env.COMPONENT_NAME }}
           tags: |
             type=semver,pattern={{version}}
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install cosign
-        if: github.event_name != 'workflow_dispatch'
-        uses: sigstore/cosign-installer@v3.7.0
-
       - name: Cache cargo bin
         id: cache-cargo
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         env:
           cache-name: cache-cargo-bin
         with:
@@ -66,21 +61,15 @@ jobs:
         continue-on-error: false
         run: |
           cargo binstall wkg --force
-          cargo binstall cargo-auditable cargo-audit
-          cargo binstall auditable2cdx
 
       - name: Add wasm32-wasip2 target
         run: rustup target add wasm32-wasip2
 
       - name: Build the component
-        run: cargo auditable build --release --target wasm32-wasip2
+        run: cargo build --release --target wasm32-wasip2
 
       - name: Normalize COMPONENT_NAME and Append .wasm
         run: echo "COMPONENT_NAME_UNDERSCORED=${COMPONENT_NAME//-/_}.wasm" >> $GITHUB_ENV
-
-      - name: Extract the SBOM from the component
-        if: github.event_name != 'workflow_dispatch'
-        run: auditable2cdx target/wasm32-wasip2/release/${{ env.COMPONENT_NAME_UNDERSCORED }} >> ${{ env.COMPONENT_NAME }}.spdx.json
 
       - name: Publish `:<version>` to GitHub Container Registry
         if: github.event_name != 'workflow_dispatch'
@@ -94,11 +83,3 @@ jobs:
           source: ${{ env.COMPONENT_SOURCE }}
           homepage: ${{ env.COMPONENT_HOMEPAGE }}
           licenses: ${{ env.COMPONENT_LICENSES }}
-
-      - name: Sign the versioned wasm component
-        if: github.event_name != 'workflow_dispatch'
-        run: cosign sign --yes ghcr.io/${{ env.IMAGE_NAME }}/${{ env.COMPONENT_NAME }}@${{ steps.publish_versioned.outputs.digest }}
-
-      - name: Sign the SBOM for the versioned Wasm component
-        if: github.event_name != 'workflow_dispatch'
-        run: cosign attest --yes --type spdxjson --predicate ${{ env.COMPONENT_NAME }}.spdx.json ghcr.io/${{ env.IMAGE_NAME }}/${{ env.COMPONENT_NAME }}@${{ steps.publish_versioned.outputs.digest }}
