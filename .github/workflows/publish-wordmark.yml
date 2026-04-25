@@ -1,10 +1,12 @@
 name: Build and publish a Wasm Component to GitHub Artifacts
 
 on:
-  push:
-    tags:
-      - v*
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish"
+        required: true
+        type: string
 
 env:
   IMAGE_NAME: ${{ github.repository }}
@@ -29,14 +31,6 @@ jobs:
 
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@v1.10.15
-
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ghcr.io/${{ github.actor }}/${{ env.COMPONENT_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v4
@@ -79,7 +73,7 @@ jobs:
         with:
           file: target/wasm32-wasip2/release/${{ env.COMPONENT_NAME_UNDERSCORED }}
           oci-reference-without-tag: ghcr.io/${{ env.IMAGE_NAME }}/${{ env.COMPONENT_NAME }}
-          version: ${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
+          version: ${{ inputs.version }}
           description: ${{ env.COMPONENT_DESCRIPTION }}
           source: ${{ env.COMPONENT_SOURCE }}
           homepage: ${{ env.COMPONENT_HOMEPAGE }}
