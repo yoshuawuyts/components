@@ -10,6 +10,7 @@ edition = "2018"
 keywords = []
 categories = []
 authors = ["Yoshua Wuyts <rust@yosh.is>"]
+publish = false
 
 [lib]
 crate-type = ["cdylib"]

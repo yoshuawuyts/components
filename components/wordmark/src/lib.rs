@@ -8,7 +8,7 @@ struct Component;
 
 export!(Component);
 
-impl exports::component::wordmark::convert::Guest for Component {
+impl exports::yoshuawuyts::wordmark::convert::Guest for Component {
     fn to_word(markdown: String) -> Result<Vec<u8>, String> {
         let doc = Converter::new(&markdown).convert()?;
         Ok(doc)

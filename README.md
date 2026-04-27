@@ -1,50 +1,15 @@
 <h1 align="center">components</h1>
 <div align="center">
   <strong>
-    Wasm Components
+    A collection of Wasm Components
   </strong>
 </div>
 
-<br />
+## Components
 
-<div align="center">
-  <!-- Crates version -->
-  <a href="https://crates.io/crates/components">
-    <img src="https://img.shields.io/crates/v/components.svg?style=flat-square"
-    alt="Crates.io version" />
-  </a>
-  <!-- Downloads -->
-  <a href="https://crates.io/crates/components">
-    <img src="https://img.shields.io/crates/d/components.svg?style=flat-square"
-      alt="Download" />
-  </a>
-  <!-- docs.rs docs -->
-  <a href="https://docs.rs/components">
-    <img src="https://img.shields.io/badge/docs-latest-blue.svg?style=flat-square"
-      alt="docs.rs docs" />
-  </a>
-</div>
-
-<div align="center">
-  <h3>
-    <a href="https://docs.rs/components">
-      API Docs
-    </a>
-    <span> | </span>
-    <a href="https://github.com/yoshuawuyts/components/releases">
-      Releases
-    </a>
-    <span> | </span>
-    <a href="https://github.com/yoshuawuyts/components/blob/master.github/CONTRIBUTING.md">
-      Contributing
-    </a>
-  </h3>
-</div>
-
-## Installation
-```sh
-$ cargo add components
-```
+| Name       | Description                                  |
+| ---------- | -------------------------------------------- |
+| `wordmark` | Convert markdown to and from `.docx` format  |
 
 ## Safety
 This crate uses ``#![deny(unsafe_code)]`` to ensure everything is implemented in
@@ -64,14 +29,11 @@ look at some of these issues:
 ## License
 
 <sup>
-Licensed under either of <a href="LICENSE-APACHE">Apache License, Version
-2.0</a> or <a href="LICENSE-MIT">MIT license</a> at your option.
+Licensed under the <a href="LICENSE">Apache License, Version 2.0</a>
 </sup>
-
-<br/>
 
 <sub>
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in this crate by you, as defined in the Apache-2.0 license, shall
-be dual licensed as above, without any additional terms or conditions.
+be licensed as above, without any additional terms or conditions.
 </sub>
