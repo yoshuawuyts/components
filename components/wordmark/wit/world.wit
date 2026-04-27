@@ -1,4 +1,4 @@
-package component:wordmark;
+package yoshuawuyts:wordmark;
 
 world wordmark {
     export convert;
