@@ -1,3 +1,11 @@
+//! Wordmark WIT component: convert Markdown to a `.docx` document.
+#![allow(
+    unsafe_code,
+    missing_docs,
+    clippy::missing_docs_in_private_items,
+    reason = "wit-bindgen generates unsafe FFI glue and undocumented items"
+)]
+
 wit_bindgen::generate!({
     world: "wordmark",
     path: "wit",

@@ -1,6 +1,6 @@
 [package]
 name = "wordmark"
-version = "1.0.0"
+version.workspace = true
 license = "Apache-2.0"
 repository = "https://github.com/yoshuawuyts/components"
 documentation = "https://docs.rs/wordmark"
@@ -23,3 +23,6 @@ pulldown-cmark = { version = "0.12", default-features = false }
 docx-rs = "0.4"
 
 [dev-dependencies]
+
+[lints]
+workspace = true
