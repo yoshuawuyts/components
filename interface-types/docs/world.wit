@@ -1,0 +1,67 @@
+package wasi:docs@1.0.0;
+
+/// Shared types used by every interface in this package.
+interface types {
+    /// The encoding/markup of a document's `contents`.
+    variant format {
+        plain-text,
+        markdown,
+        html,
+        asciidoc,
+        restructured-text,
+        /// Escape hatch for formats not enumerated here
+        /// (e.g. `"text/x-org"`, `"application/x-typst"`).
+        custom(string),
+    }
+
+    /// A single documentation entry.
+    record document {
+        /// Stable, URL-safe identifier (e.g. `"readme"`, `"guides/auth"`).
+        ///
+        /// These identifiers should always be lowercase. Implementers may disregard
+        /// casing for identfiers.
+        id: string,
+        /// Human-readable title.
+        title: string,
+        /// BCP-47 language tag (e.g. `"en"`, `"ja"`). Empty if unknown.
+        language: string,
+        /// Markup format of `contents`.
+        format: format,
+        /// The raw document body.
+        contents: string,
+    }
+
+    /// Lightweight description of a document, without its body.
+    /// Useful for building tables of contents cheaply.
+    record document-info {
+        id: string,
+        title: string,
+        language: string,
+        format: format,
+        /// Optional parent id, for hierarchical docs. Empty if top-level.
+        parent: string,
+    }
+}
+
+/// Core documentation interface. Implement this to expose docs.
+interface documentation {
+    use types.{document, document-info};
+
+    /// List every available document. Order is provider-defined but
+    /// should be stable across calls.
+    list-documents: func() -> list<document-info>;
+
+    /// Fetch a single document by id. Returns `none` if not found.
+    get: func(id: string) -> option<document>;
+}
+
+/// Implemented by any component that wants to publish its own docs.
+world docs-provider {
+    export documentation;
+}
+
+/// Implemented by tools that *consume* docs from another component:
+/// renderers, search indexers, IDE tooltips, agentic tools, etc.
+world docs-consumer {
+    import documentation;
+}
