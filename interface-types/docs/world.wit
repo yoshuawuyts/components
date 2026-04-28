@@ -1,4 +1,4 @@
-package yoshuawuyts:docs@1.0.0;
+package yoshuawuyts:docs@2.0.3;
 
 /// Shared types used by every interface in this package.
 interface types {
