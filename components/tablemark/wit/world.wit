@@ -6,4 +6,12 @@ world tablemark {
     /// Each worksheet is rendered as a GitHub-flavored Markdown table,
     /// preceded by a heading containing the sheet name.
     export to-markdown: func(xlsx: list<u8>) -> result<string, string>;
+
+    /// Convert a Markdown document containing GitHub-flavored Markdown tables
+    /// to an XLSX workbook.
+    ///
+    /// Each table found in the markdown becomes a worksheet. If the table is
+    /// preceded by a level-1 heading, the heading text is used as the sheet
+    /// name; otherwise the sheet is named `Sheet1`, `Sheet2`, and so on.
+    export to-xlsx: func(markdown: string) -> result<list<u8>, string>;
 }

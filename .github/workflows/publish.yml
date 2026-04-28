@@ -27,7 +27,7 @@ jobs:
           - name: wordmark
             description: "Convert between Markdown and Word documents"
           - name: tablemark
-            description: "Convert tabular data from XLSX files to Markdown"
+            description: "Convert between Markdown tables and XLSX workbooks"
 
     env:
       COMPONENT_NAME: ${{ matrix.name }}

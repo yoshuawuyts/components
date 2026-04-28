@@ -27,7 +27,9 @@ impl Guest for Component {
     }
 }
 
-use docx_rs::*;
+use docx_rs::{
+    read_docx, BreakType, DocumentChild, Docx, Paragraph, ParagraphChild, Run, RunChild, RunFonts,
+};
 use pulldown_cmark::HeadingLevel;
 
 /// Paragraph style applied to fenced code blocks. Used by both the writer

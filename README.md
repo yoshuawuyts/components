@@ -9,8 +9,8 @@
 
 | Name        | Description                                          |
 | ----------- | ---------------------------------------------------- |
-| `wordmark`  | Convert markdown to and from `.docx` format          |
-| `tablemark` | Convert tabular data from `.xlsx` files to markdown  |
+| `wordmark`  | Convert between Markdown and Word (`.docx`) documents |
+| `tablemark` | Convert between Markdown tables and `.xlsx` workbooks |
 
 ## Safety
 This crate uses ``#![deny(unsafe_code)]`` at the workspace level to keep
