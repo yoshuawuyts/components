@@ -21,10 +21,22 @@ impl Guest for Component {
         let doc = Converter::new(&markdown).convert()?;
         Ok(doc)
     }
+
+    fn to_markdown(docx: Vec<u8>) -> Result<String, String> {
+        Inverter::new(&docx).convert()
+    }
 }
 
 use docx_rs::*;
 use pulldown_cmark::HeadingLevel;
+
+/// Paragraph style applied to fenced code blocks. Used by both the writer
+/// (so the style is preserved in the docx) and the reader (so we can detect
+/// the construct on the way back).
+const CODE_BLOCK_STYLE: &str = "Code";
+
+/// Run style applied to inline code spans, for the same reason.
+const CODE_RUN_STYLE: &str = "CodeChar";
 
 /// Converts markdown to a Word (.docx) document.
 ///
@@ -156,8 +168,9 @@ impl Converter {
         self.in_code_block = false;
         let run = Run::new()
             .add_text(&self.code_text)
+            .style(CODE_RUN_STYLE)
             .fonts(RunFonts::new().ascii("Courier New"));
-        let para = Paragraph::new().add_run(run);
+        let para = Paragraph::new().style(CODE_BLOCK_STYLE).add_run(run);
         self.code_text.clear();
         self.add_paragraph(para);
     }
@@ -193,6 +206,7 @@ impl Converter {
     fn push_code(&mut self, text: &str) {
         let run = Run::new()
             .add_text(text)
+            .style(CODE_RUN_STYLE)
             .fonts(RunFonts::new().ascii("Courier New"));
         self.runs.push(run);
     }
@@ -214,5 +228,140 @@ impl Converter {
     /// Add a paragraph to the document.
     fn add_paragraph(&mut self, para: Paragraph) {
         self.docx = std::mem::take(&mut self.docx).add_paragraph(para);
+    }
+}
+
+/// Converts a Word (.docx) document to markdown.
+///
+/// Walks the parsed document tree and maps Word paragraphs, runs, and
+/// inline formatting back to markdown constructs. Code spans and fenced
+/// blocks are detected via the `CodeChar` run style and `Code` paragraph
+/// style emitted by [`Converter`].
+struct Inverter<'a> {
+    docx: &'a [u8],
+    out: String,
+}
+
+impl<'a> Inverter<'a> {
+    /// Create a new inverter for the given docx bytes.
+    fn new(docx: &'a [u8]) -> Self {
+        Self {
+            docx,
+            out: String::new(),
+        }
+    }
+
+    /// Convert the docx into a markdown string.
+    fn convert(mut self) -> Result<String, String> {
+        let docx = read_docx(self.docx).map_err(|e| e.to_string())?;
+        for child in &docx.document.children {
+            if let DocumentChild::Paragraph(p) = child {
+                self.write_paragraph(p);
+            }
+        }
+        // Trim trailing blank lines so the output ends with a single newline.
+        while self.out.ends_with("\n\n") {
+            self.out.pop();
+        }
+        Ok(self.out)
+    }
+
+    /// Render a single paragraph to markdown.
+    fn write_paragraph(&mut self, para: &Paragraph) {
+        let style = para
+            .property
+            .style
+            .as_ref()
+            .map(|s| s.val.as_str())
+            .unwrap_or_default();
+
+        if style == CODE_BLOCK_STYLE {
+            let mut text = String::new();
+            for child in &para.children {
+                if let ParagraphChild::Run(run) = child {
+                    collect_run_text(run, &mut text);
+                }
+            }
+            self.out.push_str("```\n");
+            self.out.push_str(&text);
+            if !text.ends_with('\n') {
+                self.out.push('\n');
+            }
+            self.out.push_str("```\n\n");
+            return;
+        }
+
+        match style {
+            "Heading1" => self.out.push_str("# "),
+            "Heading2" => self.out.push_str("## "),
+            "Heading3" => self.out.push_str("### "),
+            "Heading4" => self.out.push_str("#### "),
+            "Heading5" => self.out.push_str("##### "),
+            "Heading6" => self.out.push_str("###### "),
+            "ListParagraph" => self.out.push_str("- "),
+            _ => {}
+        }
+
+        for child in &para.children {
+            if let ParagraphChild::Run(run) = child {
+                self.write_run(run);
+            }
+        }
+
+        self.out.push_str("\n\n");
+    }
+
+    /// Render a single run, applying inline markdown formatting.
+    fn write_run(&mut self, run: &Run) {
+        let mut text = String::new();
+        for child in &run.children {
+            match child {
+                RunChild::Text(t) => text.push_str(&t.text),
+                RunChild::Tab(_) => text.push('\t'),
+                RunChild::Break(_) => text.push_str("  \n"),
+                _ => {}
+            }
+        }
+        if text.is_empty() {
+            return;
+        }
+
+        let style = run
+            .run_property
+            .style
+            .as_ref()
+            .map(|s| s.val.as_str())
+            .unwrap_or_default();
+
+        if style == CODE_RUN_STYLE {
+            self.out.push('`');
+            self.out.push_str(&text);
+            self.out.push('`');
+            return;
+        }
+
+        let bold = run.run_property.bold.is_some();
+        let italic = run.run_property.italic.is_some();
+        let marker = match (bold, italic) {
+            (true, true) => "***",
+            (true, false) => "**",
+            (false, true) => "*",
+            (false, false) => "",
+        };
+        self.out.push_str(marker);
+        self.out.push_str(&text);
+        self.out.push_str(marker);
+    }
+}
+
+/// Append all literal text contained in a run, ignoring formatting.
+fn collect_run_text(run: &Run, out: &mut String) {
+    for child in &run.children {
+        match child {
+            RunChild::Text(t) => out.push_str(&t.text),
+            RunChild::Tab(_) => out.push('\t'),
+            RunChild::Break(_) => out.push('\n'),
+            _ => {}
+        }
     }
 }

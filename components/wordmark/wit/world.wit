@@ -3,4 +3,7 @@ package yoshuawuyts:wordmark;
 world wordmark {
     /// Convert a markdown document to a Word (.docx) document.
     export to-word: func(markdown: string) -> result<list<u8>, string>;
+
+    /// Convert a Word (.docx) document to a markdown document.
+    export to-markdown: func(docx: list<u8>) -> result<string, string>;
 }
