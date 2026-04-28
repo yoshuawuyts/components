@@ -108,6 +108,9 @@ jobs:
           - name: docs
             wit-dir: interface-types/docs
             description: "Documentation interface types for WebAssembly components"
+          - name: acp
+            wit-dir: interface-types/acp
+            description: "Agent Client Protocol (ACP) interface types for WebAssembly components"
 
     env:
       INTERFACE_NAME: ${{ matrix.name }}

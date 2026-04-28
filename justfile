@@ -13,6 +13,7 @@ build:
 build-wit:
     mkdir -p target/wit
     wkg wit build -d interface-types/docs -o target/wit/docs.wasm
+    wkg wit build -d interface-types/acp -o target/wit/acp.wasm
 
 # Trigger the `Publish all Components` workflow on CI for the given version,
 # then watch the resulting run until it completes.
