@@ -1,10 +1,6 @@
 package yoshuawuyts:wordmark;
 
 world wordmark {
-    export convert;
-}
-
-interface convert {
     /// Convert a markdown document to a Word (.docx) document.
-    to-word: func(markdown: string) -> result<list<u8>, string>;
+    export to-word: func(markdown: string) -> result<list<u8>, string>;
 }
