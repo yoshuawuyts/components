@@ -8,6 +8,12 @@ build:
     cargo build -p wordmark --target wasm32-wasip2 {{cargo-profile}}
     cargo build -p tablemark --target wasm32-wasip2 {{cargo-profile}}
 
+# Build all interface-type WIT packages into .wasm files under target/wit/.
+# Output: target/wit/<name>.wasm
+build-wit:
+    mkdir -p target/wit
+    wkg wit build -d interface-types/docs -o target/wit/docs.wasm
+
 # Trigger the `Publish all Components` workflow on CI for the given version,
 # then watch the resulting run until it completes.
 # Example: `just publish 1.2.0`

@@ -12,7 +12,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  publish:
+  publish-components:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -90,5 +90,88 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ghcr.io/${{ env.IMAGE_NAME }}/${{ env.COMPONENT_NAME }}
+          subject-digest: ${{ steps.publish_versioned.outputs.digest }}
+          push-to-registry: true
+
+  publish-interface-types:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+      packages: write
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: docs
+            wit-dir: interface-types/docs
+            description: "Documentation interface types for WebAssembly components"
+
+    env:
+      INTERFACE_NAME: ${{ matrix.name }}
+      INTERFACE_WIT_DIR: ${{ matrix.wit-dir }}
+      INTERFACE_DESCRIPTION: ${{ matrix.description }}
+      INTERFACE_SOURCE: "https://github.com/yoshuawuyts/components"
+      INTERFACE_HOMEPAGE: "https://github.com/yoshuawuyts/components"
+      INTERFACE_LICENSES: "Apache-2.0"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@v1.10.15
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache cargo bin
+        id: cache-cargo
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-bin
+          restore-keys: |
+            ${{ runner.os }}-cargo-bin
+
+      - if: ${{ steps.cache-cargo.outputs.cache-hit != 'true' }}
+        name: Install build dependencies
+        continue-on-error: false
+        run: |
+          cargo binstall wkg --force
+
+      - name: Set package version
+        # `wkg wit build` reads the version from the package declaration in the
+        # WIT file, so rewrite it to match the workflow input.
+        run: |
+          sed -i -E "s/^(package [a-z0-9-]+:[a-z0-9-]+)(@[^;]*)?;/\1@${{ inputs.version }};/" "${INTERFACE_WIT_DIR}/world.wit"
+          head -n1 "${INTERFACE_WIT_DIR}/world.wit"
+
+      - name: Build the interface package
+        run: |
+          wkg wit build -d "${INTERFACE_WIT_DIR}" -o "${INTERFACE_NAME}.wasm"
+
+      - name: Publish `:<version>` to GitHub Container Registry
+        id: publish_versioned
+        uses: bytecodealliance/wkg-github-action@v5
+        with:
+          file: ${{ env.INTERFACE_NAME }}.wasm
+          oci-reference-without-tag: ghcr.io/${{ env.IMAGE_NAME }}/${{ env.INTERFACE_NAME }}
+          version: ${{ inputs.version }}
+          description: ${{ env.INTERFACE_DESCRIPTION }}
+          source: ${{ env.INTERFACE_SOURCE }}
+          homepage: ${{ env.INTERFACE_HOMEPAGE }}
+          licenses: ${{ env.INTERFACE_LICENSES }}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ env.IMAGE_NAME }}/${{ env.INTERFACE_NAME }}
           subject-digest: ${{ steps.publish_versioned.outputs.digest }}
           push-to-registry: true
