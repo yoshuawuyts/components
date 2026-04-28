@@ -1,0 +1,26 @@
+[package]
+name = "tablemark"
+license = "Apache-2.0"
+repository = "https://github.com/yoshuawuyts/components"
+documentation = "https://docs.rs/tablemark"
+description = "Wasm Components"
+readme = "README.md"
+edition = "2018"
+keywords = []
+categories = []
+authors = ["Yoshua Wuyts <rust@yosh.is>"]
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+
+[dependencies]
+wit-bindgen = "0.36"
+calamine = "0.26"
+
+[dev-dependencies]
+
+[lints]
+workspace = true

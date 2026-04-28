@@ -10,11 +10,6 @@ on:
 
 env:
   IMAGE_NAME: ${{ github.repository }}
-  COMPONENT_NAME: wordmark
-  COMPONENT_DESCRIPTION: "Convert between Markdown and Word documents"
-  COMPONENT_SOURCE: "https://github.com/yoshuawuyts/components"
-  COMPONENT_HOMEPAGE: "https://github.com/yoshuawuyts/components"
-  COMPONENT_LICENSES: "Apache-2.0"
 
 jobs:
   publish:
@@ -24,6 +19,22 @@ jobs:
       attestations: write
       packages: write
       contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: wordmark
+            description: "Convert between Markdown and Word documents"
+          - name: tablemark
+            description: "Convert tabular data from XLSX files to Markdown"
+
+    env:
+      COMPONENT_NAME: ${{ matrix.name }}
+      COMPONENT_DESCRIPTION: ${{ matrix.description }}
+      COMPONENT_SOURCE: "https://github.com/yoshuawuyts/components"
+      COMPONENT_HOMEPAGE: "https://github.com/yoshuawuyts/components"
+      COMPONENT_LICENSES: "Apache-2.0"
 
     steps:
       - name: Checkout repository
@@ -58,7 +69,7 @@ jobs:
         run: rustup target add wasm32-wasip2
 
       - name: Build the component
-        run: cargo build -p wordmark --release --target wasm32-wasip2
+        run: cargo build -p ${{ env.COMPONENT_NAME }} --release --target wasm32-wasip2
 
       - name: Normalize COMPONENT_NAME and Append .wasm
         run: echo "COMPONENT_NAME_UNDERSCORED=${COMPONENT_NAME//-/_}.wasm" >> $GITHUB_ENV

@@ -7,9 +7,10 @@
 
 ## Components
 
-| Name       | Description                                  |
-| ---------- | -------------------------------------------- |
-| `wordmark` | Convert markdown to and from `.docx` format  |
+| Name        | Description                                          |
+| ----------- | ---------------------------------------------------- |
+| `wordmark`  | Convert markdown to and from `.docx` format          |
+| `tablemark` | Convert tabular data from `.xlsx` files to markdown  |
 
 ## Safety
 This crate uses ``#![deny(unsafe_code)]`` at the workspace level to keep

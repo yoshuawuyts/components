@@ -2,10 +2,11 @@ profile := "debug"
 
 cargo-profile := if profile == "release" { "--release" } else { "" }
 
-# Build the wordmark component for wasm32-wasip2.
+# Build all components for wasm32-wasip2.
 # Use `just build profile=release` for a release build.
 build:
     cargo build -p wordmark --target wasm32-wasip2 {{cargo-profile}}
+    cargo build -p tablemark --target wasm32-wasip2 {{cargo-profile}}
 
 # Trigger the `Publish all Components` workflow on CI for the given version,
 # then watch the resulting run until it completes.

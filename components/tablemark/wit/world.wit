@@ -1,0 +1,9 @@
+package yoshuawuyts:tablemark;
+
+world tablemark {
+    /// Convert tabular data from an XLSX workbook to a Markdown document.
+    ///
+    /// Each worksheet is rendered as a GitHub-flavored Markdown table,
+    /// preceded by a heading containing the sheet name.
+    export to-markdown: func(xlsx: list<u8>) -> result<string, string>;
+}
