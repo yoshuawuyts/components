@@ -1,0 +1,67 @@
+package yoshuawuyts:acp@2.0.3;
+
+/// Methods exported by an agent. The client calls these.
+///
+/// Maps to the JSON-RPC methods listed under "Agent" in the protocol
+/// overview: <https://agentclientprotocol.com/protocol/overview#agent>
+interface agent {
+    use types.{
+        initialize-request, initialize-response,
+        authenticate-request,
+        new-session-request, new-session-response,
+        load-session-request,
+        prompt-request, prompt-response,
+        session-id, error,
+    };
+
+    /// Establish the connection. Negotiate protocol version, exchange
+    /// capabilities, and identify implementations. Maps to the JSON-RPC
+    /// `initialize` method.
+    ///
+    /// MUST be the first method called on the agent.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/initialization>
+    initialize: func(req: initialize-request) -> result<initialize-response, error>;
+
+    /// Authenticate using one of the methods advertised in
+    /// `initialize-response.auth-methods`. Only required if the agent
+    /// reports any auth methods. Maps to the JSON-RPC `authenticate` method.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/initialization#authentication>
+    authenticate: func(req: authenticate-request) -> result<_, error>;
+
+    /// Create a fresh conversation session. Must be called after
+    /// `initialize`. Maps to the JSON-RPC `session/new` method.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/session-setup#creating-a-session>
+    new-session: func(req: new-session-request) -> result<new-session-response, error>;
+
+    /// Resume a previous session. Only available when
+    /// `agent-capabilities.load-session` is true. Maps to the JSON-RPC
+    /// `session/load` method.
+    ///
+    /// The agent will replay history via `update-session` notifications on
+    /// the client interface before this call returns.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/session-setup#loading-sessions>
+    load-session: func(req: load-session-request) -> result<_, error>;
+
+    /// Send a user prompt and run a prompt turn to completion. Maps to the
+    /// JSON-RPC `session/prompt` method.
+    ///
+    /// During execution, the agent will:
+    ///   - Stream progress via the client's `update-session`.
+    ///   - Optionally call `request-permission`, `read-text-file`,
+    ///     `write-text-file`, and the terminal methods.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/prompt-turn>
+    prompt: func(req: prompt-request) -> result<prompt-response, error>;
+
+    /// Cancel an ongoing prompt turn. Modelled in JSON-RPC as the
+    /// `session/cancel` notification (no response). The agent MUST
+    /// eventually return `stop-reason::cancelled` from the in-flight
+    /// `prompt` call.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/prompt-turn#cancellation>
+    cancel: func(session-id: session-id);
+}

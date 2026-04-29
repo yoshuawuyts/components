@@ -1,0 +1,734 @@
+package yoshuawuyts:acp@2.0.3;
+
+/// A WIT mapping of the [Agent Client Protocol][acp] (ACP), modelled as a
+/// Wasm Component Model plugin system.
+///
+/// ACP is a JSON-RPC protocol between an editor (the *Client*) and a coding
+/// *Agent*. This package exposes the core protocol so that:
+///
+/// - An agent can be packaged as a Wasm component implementing
+///   [`agent-plugin`], and
+/// - An editor can host any such agent by implementing [`client-host`].
+///
+/// We intentionally model only the **core, stable** surface of ACP: connection
+/// initialization, session setup, prompt turns, tool calls (with permission),
+/// file system access, and terminals. Extension points such as `_meta`, slash
+/// commands, session modes/list/resume/close, MCP-over-ACP, and authentication
+/// methods are either omitted or modelled minimally; they can be layered on
+/// later without breaking the core.
+///
+/// All file paths in this protocol are absolute. Line numbers are 1-based.
+///
+/// # Mapping to the ACP JSON-RPC wire format
+///
+/// The protocol surface is split across the following WIT files:
+///
+/// - `types.wit`   — shared records, variants, and enums (the data model).
+/// - `agent.wit`   — methods exported by the **Agent** (Client → Agent calls).
+/// - `client.wit`  — methods exported by the **Client** (Agent → Client calls).
+/// - `worlds.wit`  — the [`agent-plugin`] and [`client-host`] worlds.
+///
+/// Method names drop JSON-RPC namespacing (`session/new` → `new-session`,
+/// `terminal/create` → `create-terminal`, etc.) because `/` is not a valid
+/// WIT identifier and structured names are clearer in component bindings.
+/// One method (`session/update`) is renamed to `update-session` to avoid
+/// colliding with the `session-update` payload type.
+///
+/// # See also
+///
+/// - Protocol overview: <https://agentclientprotocol.com/protocol/overview>
+/// - JSON schema: <https://agentclientprotocol.com/protocol/schema>
+///
+/// [acp]: https://agentclientprotocol.com
+
+/// Shared types used by both the [`agent`] and [`client`] interfaces.
+///
+/// Each section in this interface mirrors a section of the ACP spec; see
+/// the inline links throughout for exact protocol references.
+interface types {
+    // ------------------------------------------------------------------
+    // Errors
+    // ------------------------------------------------------------------
+
+    /// A protocol error, modelled after the JSON-RPC 2.0 error object.
+    ///
+    /// See: <https://www.jsonrpc.org/specification#error_object>
+    record error {
+        /// JSON-RPC / ACP error code.
+        code: error-code,
+        /// Concise, human-readable description of the error.
+        message: string,
+    }
+
+    /// Predefined error codes. These cover the JSON-RPC standard codes plus
+    /// ACP-specific ones.
+    variant error-code {
+        /// Invalid JSON was received.
+        parse-error,
+        /// The JSON sent is not a valid Request object.
+        invalid-request,
+        /// The method does not exist or is not available.
+        method-not-found,
+        /// Invalid method parameter(s).
+        invalid-params,
+        /// Internal error.
+        internal-error,
+        /// Authentication is required before this operation can be performed.
+        auth-required,
+        /// A given resource (e.g. a file) was not found.
+        resource-not-found,
+        /// Any other implementation-defined error code.
+        other(s32),
+    }
+
+    // ------------------------------------------------------------------
+    // Identifiers
+    // ------------------------------------------------------------------
+
+    /// Unique identifier for an active session, returned by `new-session`.
+    type session-id = string;
+
+    /// Unique identifier for a tool call within a session.
+    type tool-call-id = string;
+
+    /// Unique identifier for a terminal created via the terminal API.
+    type terminal-id = string;
+
+    // ------------------------------------------------------------------
+    // Implementation info
+    // ------------------------------------------------------------------
+
+    /// Identification metadata for a client or agent implementation.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/initialization#implementation-information>
+    record implementation-info {
+        /// Programmatic name (e.g. `"my-agent"`).
+        name: string,
+        /// Optional human-readable display name.
+        title: option<string>,
+        /// Implementation version (e.g. `"1.0.0"`).
+        version: string,
+    }
+
+    // ------------------------------------------------------------------
+    // Capabilities
+    //
+    // See: https://agentclientprotocol.com/protocol/initialization#capabilities
+    // ------------------------------------------------------------------
+
+    /// File system features the client supports.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/file-system>
+    record fs-capabilities {
+        /// Client supports `read-text-file`.
+        read-text-file: bool,
+        /// Client supports `write-text-file`.
+        write-text-file: bool,
+    }
+
+    /// Capabilities advertised by the client during `initialize`.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/initialization#client-capabilities>
+    record client-capabilities {
+        /// File system read/write capabilities.
+        fs: fs-capabilities,
+        /// Whether the client supports the terminal API.
+        terminal: bool,
+    }
+
+    /// Content types the agent can accept in `prompt` requests beyond the
+    /// baseline (text and resource links, which are always supported).
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/initialization#prompt-capabilities>
+    record prompt-capabilities {
+        /// Image content blocks may appear in prompts.
+        image: bool,
+        /// Audio content blocks may appear in prompts.
+        audio: bool,
+        /// Embedded resources may appear in prompts.
+        embedded-context: bool,
+    }
+
+    /// MCP transports the agent supports for `mcp-server` configurations.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/initialization#mcp-capabilities>
+    record mcp-capabilities {
+        /// HTTP transport.
+        http: bool,
+        /// SSE transport (deprecated by the MCP spec).
+        sse: bool,
+    }
+
+    /// Capabilities advertised by the agent during `initialize`.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/initialization#agent-capabilities>
+    record agent-capabilities {
+        /// Whether the agent supports `load-session`.
+        load-session: bool,
+        /// Content types the agent accepts in prompts.
+        prompt-capabilities: prompt-capabilities,
+        /// MCP transports the agent supports.
+        mcp-capabilities: mcp-capabilities,
+    }
+
+    /// An authentication method the agent supports.
+    record auth-method {
+        /// Stable identifier for this method.
+        id: string,
+        /// Human-readable display name.
+        name: string,
+        /// Optional longer description.
+        description: option<string>,
+    }
+
+    // ------------------------------------------------------------------
+    // Initialize
+    //
+    // See: https://agentclientprotocol.com/protocol/initialization
+    // ------------------------------------------------------------------
+
+    /// Parameters to `initialize`.
+    record initialize-request {
+        /// The latest ACP protocol major version the client supports.
+        protocol-version: u32,
+        /// What the client can do.
+        client-capabilities: client-capabilities,
+        /// Optional client identification.
+        client-info: option<implementation-info>,
+    }
+
+    /// Response to `initialize`.
+    record initialize-response {
+        /// The protocol major version the agent has selected.
+        protocol-version: u32,
+        /// What the agent can do.
+        agent-capabilities: agent-capabilities,
+        /// Optional agent identification.
+        agent-info: option<implementation-info>,
+        /// Authentication methods available, if any.
+        auth-methods: list<auth-method>,
+    }
+
+    // ------------------------------------------------------------------
+    // Authentication
+    //
+    // See: https://agentclientprotocol.com/protocol/initialization#authentication
+    // ------------------------------------------------------------------
+
+    /// Parameters to `authenticate`.
+    record authenticate-request {
+        /// The id of the auth method to use, from `auth-methods` in
+        /// `initialize-response`.
+        method-id: string,
+    }
+
+    // ------------------------------------------------------------------
+    // Session setup
+    //
+    // See: https://agentclientprotocol.com/protocol/session-setup
+    // ------------------------------------------------------------------
+
+    /// An environment variable, used when launching MCP stdio servers or
+    /// terminal commands.
+    record env-var {
+        name: string,
+        value: string,
+    }
+
+    /// An HTTP header, used when connecting to MCP HTTP/SSE servers.
+    record http-header {
+        name: string,
+        value: string,
+    }
+
+    /// Configuration for connecting to an MCP server.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/session-setup#mcp-servers>
+    variant mcp-server {
+        /// Stdio transport (always supported).
+        stdio(mcp-server-stdio),
+        /// HTTP transport (requires `agent-capabilities.mcp-capabilities.http`).
+        http(mcp-server-http),
+        /// SSE transport (requires `agent-capabilities.mcp-capabilities.sse`).
+        sse(mcp-server-sse),
+    }
+
+    record mcp-server-stdio {
+        /// Human-readable name.
+        name: string,
+        /// Absolute path to the MCP server executable.
+        command: string,
+        /// Command-line arguments.
+        args: list<string>,
+        /// Environment variables.
+        env: list<env-var>,
+    }
+
+    record mcp-server-http {
+        /// Human-readable name.
+        name: string,
+        /// URL of the MCP server.
+        url: string,
+        /// HTTP headers to include on every request.
+        headers: list<http-header>,
+    }
+
+    record mcp-server-sse {
+        /// Human-readable name.
+        name: string,
+        /// SSE endpoint URL.
+        url: string,
+        /// HTTP headers to include when establishing the connection.
+        headers: list<http-header>,
+    }
+
+    /// Parameters to `new-session`.
+    record new-session-request {
+        /// The working directory for this session. MUST be absolute.
+        cwd: string,
+        /// MCP servers the agent should connect to for this session.
+        mcp-servers: list<mcp-server>,
+    }
+
+    /// Response to `new-session`.
+    record new-session-response {
+        /// The id assigned to the new session.
+        session-id: session-id,
+    }
+
+    /// Parameters to `load-session` (only valid if
+    /// `agent-capabilities.load-session` is true).
+    record load-session-request {
+        /// The id of the session to resume.
+        session-id: session-id,
+        /// The working directory for the session.
+        cwd: string,
+        /// MCP servers to (re)connect to.
+        mcp-servers: list<mcp-server>,
+    }
+
+    // ------------------------------------------------------------------
+    // Content blocks
+    //
+    // See: https://agentclientprotocol.com/protocol/content
+    // ------------------------------------------------------------------
+
+    /// A displayable block of content. Mirrors MCP's `ContentBlock` so that
+    /// MCP tool output can be forwarded without transformation.
+    variant content-block {
+        /// Plain text or Markdown. Always supported.
+        text(text-content),
+        /// Image content. Requires the `image` prompt capability.
+        image(image-content),
+        /// Audio content. Requires the `audio` prompt capability.
+        audio(audio-content),
+        /// A reference to a resource the agent can fetch. Always supported.
+        resource-link(resource-link),
+        /// An embedded resource with content inline. Requires the
+        /// `embedded-context` prompt capability. Mirrors MCP's
+        /// `"type": "resource"` content block.
+        %resource(embedded-resource),
+    }
+
+    record text-content {
+        /// The text. May be plain or Markdown.
+        text: string,
+    }
+
+    record image-content {
+        /// Base64-encoded image bytes.
+        data: string,
+        /// MIME type, e.g. `"image/png"`.
+        mime-type: string,
+        /// Optional source URI.
+        uri: option<string>,
+    }
+
+    record audio-content {
+        /// Base64-encoded audio bytes.
+        data: string,
+        /// MIME type, e.g. `"audio/wav"`.
+        mime-type: string,
+    }
+
+    record resource-link {
+        /// Absolute URI of the resource.
+        uri: string,
+        /// Human-readable name.
+        name: string,
+        /// Optional MIME type.
+        mime-type: option<string>,
+        /// Optional display title.
+        title: option<string>,
+        /// Optional description.
+        description: option<string>,
+        /// Optional size in bytes.
+        size: option<u64>,
+    }
+
+    record embedded-resource {
+        /// The embedded contents.
+        %resource: resource-contents,
+    }
+
+    /// Inline contents of an embedded resource — either text or binary.
+    variant resource-contents {
+        text(text-resource-contents),
+        blob(blob-resource-contents),
+    }
+
+    record text-resource-contents {
+        uri: string,
+        mime-type: option<string>,
+        text: string,
+    }
+
+    record blob-resource-contents {
+        uri: string,
+        mime-type: option<string>,
+        /// Base64-encoded binary data.
+        blob: string,
+    }
+
+    // ------------------------------------------------------------------
+    // Prompt turn
+    //
+    // See: https://agentclientprotocol.com/protocol/prompt-turn
+    // ------------------------------------------------------------------
+
+    /// Parameters to `prompt`.
+    record prompt-request {
+        /// The session this prompt belongs to.
+        session-id: session-id,
+        /// The user message, as a sequence of content blocks.
+        prompt: list<content-block>,
+    }
+
+    /// Response to `prompt`.
+    record prompt-response {
+        /// Why the agent stopped processing this turn.
+        stop-reason: stop-reason,
+    }
+
+    /// Why a prompt turn ended.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/prompt-turn#stop-reasons>
+    enum stop-reason {
+        /// The model finished responding without requesting more tools.
+        end-turn,
+        /// The token limit was reached.
+        max-tokens,
+        /// The agent hit its per-turn request cap.
+        max-turn-requests,
+        /// The agent refused to continue.
+        refusal,
+        /// The client cancelled the turn via `cancel`. Agents MUST return
+        /// this stop reason in response to a `cancel` notification, even
+        /// when underlying operations raise exceptions.
+        cancelled,
+    }
+
+    // ------------------------------------------------------------------
+    // Session updates (agent → client notifications)
+    //
+    // See: https://agentclientprotocol.com/protocol/prompt-turn#3-agent-reports-output
+    // ------------------------------------------------------------------
+
+    /// A streaming update sent by the agent during a prompt turn. Variants
+    /// follow the `sessionUpdate` discriminator in the JSON protocol.
+    variant session-update {
+        /// A chunk of the user's message being replayed (e.g. during
+        /// `load-session`).
+        user-message-chunk(content-block),
+        /// A chunk of the agent's response.
+        agent-message-chunk(content-block),
+        /// A chunk of the agent's internal reasoning ("thought").
+        agent-thought-chunk(content-block),
+        /// A new tool call has been initiated.
+        tool-call(tool-call),
+        /// An update to an existing tool call.
+        tool-call-update(tool-call-update),
+        /// The agent's current execution plan.
+        plan(plan),
+    }
+
+    // ------------------------------------------------------------------
+    // Tool calls
+    //
+    // See: https://agentclientprotocol.com/protocol/tool-calls
+    // ------------------------------------------------------------------
+
+    /// A tool call initiated by the language model and executed by the agent.
+    record tool-call {
+        /// Unique id of this tool call within the session.
+        id: tool-call-id,
+        /// Human-readable title (e.g. `"Reading config.json"`).
+        title: string,
+        /// Category, used by clients to pick icons / display treatment.
+        kind: tool-kind,
+        /// Current execution status.
+        status: tool-call-status,
+        /// Content produced so far.
+        content: list<tool-call-content>,
+        /// File locations this call is touching, for follow-along UI.
+        locations: list<tool-call-location>,
+        /// Raw JSON-encoded input parameters, if the agent wishes to share.
+        raw-input: option<string>,
+        /// Raw JSON-encoded output, if any.
+        raw-output: option<string>,
+    }
+
+    /// An update to an existing tool call. Only changed fields are populated.
+    record tool-call-update {
+        /// Which tool call to update.
+        id: tool-call-id,
+        /// Replace the title.
+        title: option<string>,
+        /// Replace the kind.
+        kind: option<tool-kind>,
+        /// Replace the status.
+        status: option<tool-call-status>,
+        /// Replace the content collection.
+        content: option<list<tool-call-content>>,
+        /// Replace the locations collection.
+        locations: option<list<tool-call-location>>,
+        /// Replace raw input.
+        raw-input: option<string>,
+        /// Replace raw output.
+        raw-output: option<string>,
+    }
+
+    /// Categories of tools.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/tool-calls#creating>
+    enum tool-kind {
+        /// Reading files or data.
+        read,
+        /// Modifying files or content.
+        edit,
+        /// Removing files or data.
+        delete,
+        /// Moving or renaming files.
+        move,
+        /// Searching for information.
+        search,
+        /// Running commands or code.
+        execute,
+        /// Internal reasoning or planning.
+        think,
+        /// Retrieving external data.
+        fetch,
+        /// Anything else.
+        other,
+    }
+
+    /// Lifecycle states of a tool call.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/tool-calls#status>
+    enum tool-call-status {
+        /// Awaiting input streaming or permission.
+        pending,
+        /// Currently running.
+        in-progress,
+        /// Finished successfully.
+        completed,
+        /// Failed with an error.
+        failed,
+    }
+
+    /// Output produced by a tool call.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/tool-calls#content>
+    variant tool-call-content {
+        /// A standard content block.
+        content(content-block),
+        /// A file modification, displayed as a diff.
+        diff(diff),
+        /// A reference to a live terminal created via `create-terminal`.
+        terminal(terminal-id),
+    }
+
+    /// A diff against a single file.
+    record diff {
+        /// Absolute path of the file.
+        path: string,
+        /// Original content. `none` for new files.
+        old-text: option<string>,
+        /// New content after modification.
+        new-text: string,
+    }
+
+    /// A file location a tool call is operating on.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/tool-calls#following-the-agent>
+    record tool-call-location {
+        /// Absolute file path.
+        path: string,
+        /// Optional 1-based line number within the file.
+        line: option<u32>,
+    }
+
+    // ------------------------------------------------------------------
+    // Plans
+    //
+    // See: https://agentclientprotocol.com/protocol/agent-plan
+    // ------------------------------------------------------------------
+
+    /// An execution plan reported by the agent.
+    record plan {
+        entries: list<plan-entry>,
+    }
+
+    /// A single planned task.
+    record plan-entry {
+        /// Human-readable description.
+        content: string,
+        /// Importance.
+        priority: plan-entry-priority,
+        /// Lifecycle state.
+        status: plan-entry-status,
+    }
+
+    enum plan-entry-priority {
+        high,
+        medium,
+        low,
+    }
+
+    enum plan-entry-status {
+        pending,
+        in-progress,
+        completed,
+    }
+
+    // ------------------------------------------------------------------
+    // Permission requests (agent → client)
+    //
+    // See: https://agentclientprotocol.com/protocol/tool-calls#requesting-permission
+    // ------------------------------------------------------------------
+
+    /// Parameters to `request-permission`.
+    record request-permission-request {
+        /// The session this permission request belongs to.
+        session-id: session-id,
+        /// The tool call awaiting approval.
+        tool-call: tool-call-update,
+        /// Choices to present to the user.
+        options: list<permission-option>,
+    }
+
+    /// A choice the user can pick when granting/denying permission.
+    record permission-option {
+        /// Stable id; returned in the response if selected.
+        id: string,
+        /// Human-readable label.
+        name: string,
+        /// UI hint.
+        kind: permission-option-kind,
+    }
+
+    enum permission-option-kind {
+        /// Allow this once.
+        allow-once,
+        /// Allow and remember.
+        allow-always,
+        /// Reject this once.
+        reject-once,
+        /// Reject and remember.
+        reject-always,
+    }
+
+    /// Response to `request-permission`.
+    record request-permission-response {
+        outcome: permission-outcome,
+    }
+
+    /// Outcome of a permission request.
+    variant permission-outcome {
+        /// The current prompt turn was cancelled before the user responded.
+        /// Clients MUST return this when responding to permission requests
+        /// after receiving `cancel`.
+        cancelled,
+        /// The user picked one of the offered options. The string is the
+        /// `permission-option.id` of the selected option.
+        selected(string),
+    }
+
+    // ------------------------------------------------------------------
+    // File system (agent → client)
+    //
+    // See: https://agentclientprotocol.com/protocol/file-system
+    // ------------------------------------------------------------------
+
+    /// Parameters to `read-text-file`.
+    record read-text-file-request {
+        /// The session this request belongs to.
+        session-id: session-id,
+        /// Absolute path to the file.
+        path: string,
+        /// Optional 1-based line to start reading from.
+        line: option<u32>,
+        /// Optional maximum number of lines.
+        limit: option<u32>,
+    }
+
+    /// Response to `read-text-file`.
+    record read-text-file-response {
+        content: string,
+    }
+
+    /// Parameters to `write-text-file`.
+    record write-text-file-request {
+        /// The session this request belongs to.
+        session-id: session-id,
+        /// Absolute path to the file. The client MUST create it if missing.
+        path: string,
+        /// New file contents.
+        content: string,
+    }
+
+    // ------------------------------------------------------------------
+    // Terminals (agent → client)
+    //
+    // See: https://agentclientprotocol.com/protocol/terminals
+    // ------------------------------------------------------------------
+
+    /// Parameters to `create-terminal`.
+    record create-terminal-request {
+        session-id: session-id,
+        /// Command to execute.
+        command: string,
+        /// Arguments.
+        args: list<string>,
+        /// Environment variables.
+        env: list<env-var>,
+        /// Working directory (absolute path).
+        cwd: option<string>,
+        /// Maximum bytes of output to retain. Once exceeded, output is
+        /// truncated from the start, on a character boundary.
+        output-byte-limit: option<u64>,
+    }
+
+    /// Response to `create-terminal`.
+    record create-terminal-response {
+        terminal-id: terminal-id,
+    }
+
+    /// Snapshot of a terminal's output.
+    record terminal-output {
+        /// Output captured so far.
+        output: string,
+        /// Whether the output was truncated due to byte limits.
+        truncated: bool,
+        /// Present if the command has exited.
+        exit-status: option<terminal-exit-status>,
+    }
+
+    /// How a terminal command finished.
+    record terminal-exit-status {
+        /// Exit code, if the process exited normally.
+        exit-code: option<s32>,
+        /// Signal name, if killed by signal.
+        signal: option<string>,
+    }
+}

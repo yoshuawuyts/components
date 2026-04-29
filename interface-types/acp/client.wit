@@ -1,0 +1,81 @@
+package yoshuawuyts:acp@2.0.3;
+
+/// Methods exported by the client. The agent calls these.
+///
+/// Maps to the JSON-RPC methods listed under "Client" in the protocol
+/// overview: <https://agentclientprotocol.com/protocol/overview#client>
+///
+/// `update-session` is a notification (one-way). Everything else is a
+/// request/response pair.
+interface client {
+    use types.{
+        session-id, session-update,
+        request-permission-request, request-permission-response,
+        read-text-file-request, read-text-file-response,
+        write-text-file-request,
+        create-terminal-request, create-terminal-response,
+        terminal-id, terminal-output, terminal-exit-status,
+        error,
+    };
+
+    /// Notification: the agent reports progress, output, tool calls, or
+    /// plan changes for the given session. Maps to the JSON-RPC
+    /// `session/update` notification.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/prompt-turn#3-agent-reports-output>
+    update-session: func(session-id: session-id, update: session-update);
+
+    /// Ask the user to authorize a tool call. Returns the user's decision.
+    /// Maps to the JSON-RPC `session/request_permission` method.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/tool-calls#requesting-permission>
+    request-permission: func(req: request-permission-request) -> result<request-permission-response, error>;
+
+    /// Read a text file from the client's environment, including any
+    /// unsaved editor state. Requires `client-capabilities.fs.read-text-file`.
+    /// Maps to the JSON-RPC `fs/read_text_file` method.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/file-system#reading-files>
+    read-text-file: func(req: read-text-file-request) -> result<read-text-file-response, error>;
+
+    /// Write a text file in the client's environment. Creates the file if
+    /// missing. Requires `client-capabilities.fs.write-text-file`. Maps to
+    /// the JSON-RPC `fs/write_text_file` method.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/file-system#writing-files>
+    write-text-file: func(req: write-text-file-request) -> result<_, error>;
+
+    /// Start a command in a new terminal and return its id immediately.
+    /// Requires `client-capabilities.terminal`. Maps to the JSON-RPC
+    /// `terminal/create` method.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/terminals#executing-commands>
+    create-terminal: func(req: create-terminal-request) -> result<create-terminal-response, error>;
+
+    /// Get the current output and (if exited) exit status of a terminal,
+    /// without waiting for completion. Maps to the JSON-RPC
+    /// `terminal/output` method.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/terminals#getting-output>
+    get-terminal-output: func(session-id: session-id, terminal-id: terminal-id) -> result<terminal-output, error>;
+
+    /// Wait for a terminal's command to exit, and return its exit status.
+    /// Maps to the JSON-RPC `terminal/wait_for_exit` method.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/terminals#waiting-for-exit>
+    wait-for-terminal-exit: func(session-id: session-id, terminal-id: terminal-id) -> result<terminal-exit-status, error>;
+
+    /// Kill a running terminal command without releasing the terminal id.
+    /// `get-terminal-output` and `wait-for-terminal-exit` remain valid after
+    /// this call. Maps to the JSON-RPC `terminal/kill` method.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/terminals#killing-commands>
+    kill-terminal: func(session-id: session-id, terminal-id: terminal-id) -> result<_, error>;
+
+    /// Kill the command if still running and free all resources associated
+    /// with the terminal. After this call the terminal id is invalid. Maps
+    /// to the JSON-RPC `terminal/release` method.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/terminals#releasing-terminals>
+    release-terminal: func(session-id: session-id, terminal-id: terminal-id) -> result<_, error>;
+}
