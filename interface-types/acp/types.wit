@@ -231,13 +231,17 @@ interface types {
     /// An environment variable, used when launching MCP stdio servers or
     /// terminal commands.
     record env-var {
+        /// Variable name.
         name: string,
+        /// Variable value.
         value: string,
     }
 
     /// An HTTP header, used when connecting to MCP HTTP/SSE servers.
     record http-header {
+        /// Header name.
         name: string,
+        /// Header value.
         value: string,
     }
 
@@ -373,18 +377,27 @@ interface types {
 
     /// Inline contents of an embedded resource — either text or binary.
     variant resource-contents {
+        /// Text contents.
         text(text-resource-contents),
+        /// Binary contents (base64-encoded).
         blob(blob-resource-contents),
     }
 
+    /// Inline text resource.
     record text-resource-contents {
+        /// URI identifying the resource.
         uri: string,
+        /// Optional MIME type of the text content.
         mime-type: option<string>,
+        /// The text contents.
         text: string,
     }
 
+    /// Inline binary resource.
     record blob-resource-contents {
+        /// URI identifying the resource.
         uri: string,
+        /// Optional MIME type of the binary content.
         mime-type: option<string>,
         /// Base64-encoded binary data.
         blob: string,
@@ -576,6 +589,7 @@ interface types {
 
     /// An execution plan reported by the agent.
     record plan {
+        /// Tasks the agent intends to accomplish.
         entries: list<plan-entry>,
     }
 
@@ -589,15 +603,23 @@ interface types {
         status: plan-entry-status,
     }
 
+    /// Priority of a plan entry.
     enum plan-entry-priority {
+        /// Critical to the overall goal.
         high,
+        /// Important but not critical.
         medium,
+        /// Nice to have, not essential.
         low,
     }
 
+    /// Lifecycle state of a plan entry.
     enum plan-entry-status {
+        /// Not started yet.
         pending,
+        /// Currently being worked on.
         in-progress,
+        /// Successfully completed.
         completed,
     }
 
@@ -627,6 +649,8 @@ interface types {
         kind: permission-option-kind,
     }
 
+    /// UI hint for a permission option, helping clients pick icons and
+    /// styling.
     enum permission-option-kind {
         /// Allow this once.
         allow-once,
@@ -640,6 +664,7 @@ interface types {
 
     /// Response to `request-permission`.
     record request-permission-response {
+        /// The user's decision.
         outcome: permission-outcome,
     }
 
@@ -674,6 +699,7 @@ interface types {
 
     /// Response to `read-text-file`.
     record read-text-file-response {
+        /// The file contents.
         content: string,
     }
 
@@ -695,6 +721,7 @@ interface types {
 
     /// Parameters to `create-terminal`.
     record create-terminal-request {
+        /// The session this terminal belongs to.
         session-id: session-id,
         /// Command to execute.
         command: string,
@@ -711,6 +738,7 @@ interface types {
 
     /// Response to `create-terminal`.
     record create-terminal-response {
+        /// The id of the newly created terminal.
         terminal-id: terminal-id,
     }
 
