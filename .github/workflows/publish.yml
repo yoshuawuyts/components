@@ -150,11 +150,15 @@ jobs:
           cargo binstall wkg --force
 
       - name: Set package version
-        # `wkg wit build` reads the version from the package declaration in the
-        # WIT file, so rewrite it to match the workflow input.
+        # `wkg wit build` reads the version from the package declaration in
+        # each WIT file, so rewrite every `.wit` file in the interface
+        # directory to match the workflow input. All files in a package
+        # MUST declare the same version.
         run: |
-          sed -i -E "s/^(package [a-z0-9-]+:[a-z0-9-]+)(@[^;]*)?;/\1@${{ inputs.version }};/" "${INTERFACE_WIT_DIR}/world.wit"
-          head -n1 "${INTERFACE_WIT_DIR}/world.wit"
+          for f in "${INTERFACE_WIT_DIR}"/*.wit; do
+            sed -i -E "s/^(package [a-z0-9-]+:[a-z0-9-]+)(@[^;]*)?;/\1@${{ inputs.version }};/" "$f"
+            head -n1 "$f"
+          done
 
       - name: Build the interface package
         run: |
