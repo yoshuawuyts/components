@@ -5,7 +5,7 @@ package yoshuawuyts:acp@2.0.3;
 /// The component exports the [`agent`] interface so a host editor can drive
 /// it, and imports the [`client`] interface so it can stream updates and
 /// call into client capabilities (fs, terminal, permission prompts).
-world agent-plugin {
+world agent {
     export agent;
     import client;
 }
@@ -16,7 +16,7 @@ world agent-plugin {
 /// The host imports the [`agent`] interface to call into a loaded agent
 /// component, and exports the [`client`] interface so the agent can call
 /// back into it.
-world client-host {
+world client {
     import agent;
     export client;
 }

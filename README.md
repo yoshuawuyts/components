@@ -12,6 +12,16 @@
 | `wordmark`  | Convert between Markdown and Word (`.docx`) documents |
 | `tablemark` | Convert between Markdown tables and `.xlsx` workbooks |
 
+## Interfaces
+
+WIT interface definitions (no component implementation).
+
+| Name  | Description                                                       |
+| ----- | ----------------------------------------------------------------- |
+| `acp` | WIT definition of the [Agent Client Protocol][acp]                |
+
+[acp]: https://agentclientprotocol.com
+
 ## Safety
 This crate uses ``#![deny(unsafe_code)]`` at the workspace level to keep
 hand-written code in 100% Safe Rust. The only exception is the FFI glue

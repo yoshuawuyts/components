@@ -7,8 +7,8 @@ package yoshuawuyts:acp@2.0.3;
 /// *Agent*. This package exposes the core protocol so that:
 ///
 /// - An agent can be packaged as a Wasm component implementing
-///   [`agent-plugin`], and
-/// - An editor can host any such agent by implementing [`client-host`].
+///   [`agent`], and
+/// - An editor can host any such agent by implementing [`client`].
 ///
 /// We intentionally model only the **core, stable** surface of ACP: connection
 /// initialization, session setup, prompt turns, tool calls (with permission),
@@ -26,7 +26,7 @@ package yoshuawuyts:acp@2.0.3;
 /// - `types.wit`   — shared records, variants, and enums (the data model).
 /// - `agent.wit`   — methods exported by the **Agent** (Client → Agent calls).
 /// - `client.wit`  — methods exported by the **Client** (Agent → Client calls).
-/// - `worlds.wit`  — the [`agent-plugin`] and [`client-host`] worlds.
+/// - `worlds.wit`  — the [`agent`] and [`client`] worlds.
 ///
 /// Method names drop JSON-RPC namespacing (`session/new` → `new-session`,
 /// `terminal/create` → `create-terminal`, etc.) because `/` is not a valid
