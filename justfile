@@ -24,3 +24,17 @@ publish target version:
     @echo "Waiting for run to start..."
     @sleep 3
     gh run watch --exit-status $(gh run list --workflow=publish.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+
+# Show the latest semver tag published to GHCR for each package.
+# Skips non-semver tags (e.g. `latest`). Prints `<package>: <version>` per line,
+# or `<package>: -` if no semver tag has been published yet.
+versions:
+    @for pkg in wordmark tablemark docs acp; do \
+        latest=$(gh api -H "Accept: application/vnd.github+json" \
+            "/users/yoshuawuyts/packages/container/components%2F$pkg/versions" \
+            --jq '[.[].metadata.container.tags[]? | select(test("^v?[0-9]+\\.[0-9]+\\.[0-9]+([-+].*)?$"))] | unique | .[]' 2>/dev/null \
+            | sed 's/^v//' \
+            | sort -V \
+            | tail -n1); \
+        printf '%-10s %s\n' "$pkg" "${latest:--}"; \
+    done
