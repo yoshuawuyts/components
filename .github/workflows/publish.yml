@@ -1,10 +1,19 @@
-name: Publish all Components
+name: Publish Component
 
 on:
   workflow_dispatch:
     inputs:
+      target:
+        description: "Which component or interface package to publish"
+        required: true
+        type: choice
+        options:
+          - wordmark
+          - tablemark
+          - docs
+          - acp
       version:
-        description: "Version to publish"
+        description: "Version to publish (e.g. 1.2.0)"
         required: true
         type: string
 
@@ -12,7 +21,8 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  publish-components:
+  publish-component:
+    if: ${{ inputs.target == 'wordmark' || inputs.target == 'tablemark' }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -20,18 +30,8 @@ jobs:
       packages: write
       contents: read
 
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: wordmark
-            description: "Convert between Markdown and Word documents"
-          - name: tablemark
-            description: "Convert between Markdown tables and XLSX workbooks"
-
     env:
-      COMPONENT_NAME: ${{ matrix.name }}
-      COMPONENT_DESCRIPTION: ${{ matrix.description }}
+      COMPONENT_NAME: ${{ inputs.target }}
       COMPONENT_SOURCE: "https://github.com/yoshuawuyts/components"
       COMPONENT_HOMEPAGE: "https://github.com/yoshuawuyts/components"
       COMPONENT_LICENSES: "Apache-2.0"
@@ -39,6 +39,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Resolve component description
+        run: |
+          case "${COMPONENT_NAME}" in
+            wordmark)  desc="Convert between Markdown and Word documents" ;;
+            tablemark) desc="Convert between Markdown tables and XLSX workbooks" ;;
+            *) echo "Unknown component: ${COMPONENT_NAME}" >&2; exit 1 ;;
+          esac
+          echo "COMPONENT_DESCRIPTION=${desc}" >> "$GITHUB_ENV"
 
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@v1.10.15
@@ -93,7 +102,8 @@ jobs:
           subject-digest: ${{ steps.publish_versioned.outputs.digest }}
           push-to-registry: true
 
-  publish-interface-types:
+  publish-interface:
+    if: ${{ inputs.target == 'docs' || inputs.target == 'acp' }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -101,21 +111,9 @@ jobs:
       packages: write
       contents: read
 
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: docs
-            wit-dir: interface-types/docs
-            description: "Documentation interface types for WebAssembly components"
-          - name: acp
-            wit-dir: interface-types/acp
-            description: "Agent Client Protocol (ACP) interface types for WebAssembly components"
-
     env:
-      INTERFACE_NAME: ${{ matrix.name }}
-      INTERFACE_WIT_DIR: ${{ matrix.wit-dir }}
-      INTERFACE_DESCRIPTION: ${{ matrix.description }}
+      INTERFACE_NAME: ${{ inputs.target }}
+      INTERFACE_WIT_DIR: interface-types/${{ inputs.target }}
       INTERFACE_SOURCE: "https://github.com/yoshuawuyts/components"
       INTERFACE_HOMEPAGE: "https://github.com/yoshuawuyts/components"
       INTERFACE_LICENSES: "Apache-2.0"
@@ -123,6 +121,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Resolve interface description
+        run: |
+          case "${INTERFACE_NAME}" in
+            docs) desc="Documentation interface types for WebAssembly components" ;;
+            acp)  desc="Agent Client Protocol (ACP) interface types for WebAssembly components" ;;
+            *) echo "Unknown interface: ${INTERFACE_NAME}" >&2; exit 1 ;;
+          esac
+          echo "INTERFACE_DESCRIPTION=${desc}" >> "$GITHUB_ENV"
 
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@v1.10.15

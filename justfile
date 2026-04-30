@@ -15,11 +15,12 @@ build-wit:
     wkg wit build -d interface-types/docs -o target/wit/docs.wasm
     wkg wit build -d interface-types/acp -o target/wit/acp.wasm
 
-# Trigger the `Publish all Components` workflow on CI for the given version,
-# then watch the resulting run until it completes.
-# Example: `just publish 1.2.0`
-publish version:
-    gh workflow run publish.yml --field version={{version}}
+# Trigger the `Publish Component` workflow on CI for a single target at the
+# given version, then watch the resulting run until it completes.
+# `target` must be one of: wordmark, tablemark, docs, acp.
+# Example: `just publish wordmark 1.2.0`
+publish target version:
+    gh workflow run publish.yml --field target={{target}} --field version={{version}}
     @echo "Waiting for run to start..."
     @sleep 3
     gh run watch --exit-status $(gh run list --workflow=publish.yml --limit 1 --json databaseId --jq '.[0].databaseId')
