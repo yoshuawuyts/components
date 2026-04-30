@@ -1,22 +1,23 @@
 package yoshuawuyts:acp@2.0.3;
 
-/// World implemented by an ACP agent packaged as a Wasm component.
+/// An ACP agent component: exports [`agent`] (driven by the host) and imports
+/// [`client`] (for fs, terminal, and permission callbacks).
 ///
-/// The component exports the [`agent`] interface so a host editor can drive
-/// it, and imports the [`client`] interface so it can stream updates and
-/// call into client capabilities (fs, terminal, permission prompts).
-world agent {
+/// A terminal endpoint in an ACP topology. The host needs no separate world —
+/// it provides the `client` import and calls the `agent` export.
+world provider {
     export agent;
     import client;
 }
 
-/// World implemented by a host (e.g. an editor like Zed) that drives ACP
-/// agent components.
+/// An ACP layer component: wraps a downstream [`provider`] (or another
+/// [`layer`]) with the same protocol on both sides. Exports [`agent`]
+/// upstream, imports [`agent`] downstream, and inherits the [`client`]
+/// import from [`provider`].
 ///
-/// The host imports the [`agent`] interface to call into a loaded agent
-/// component, and exports the [`client`] interface so the agent can call
-/// back into it.
-world client {
+/// Useful for logging, prompt rewriting, tool-call filtering, or routing
+/// across backends. Analogous to a `tower::Layer`.
+world layer {
+    include provider;
     import agent;
-    export client;
 }

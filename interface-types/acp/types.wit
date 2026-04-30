@@ -26,7 +26,7 @@ package yoshuawuyts:acp@2.0.3;
 /// - `types.wit`   — shared records, variants, and enums (the data model).
 /// - `agent.wit`   — methods exported by the **Agent** (Client → Agent calls).
 /// - `client.wit`  — methods exported by the **Client** (Agent → Client calls).
-/// - `worlds.wit`  — the [`agent`] and [`client`] worlds.
+/// - `worlds.wit`  — the [`provider`] and [`layer`] worlds.
 ///
 /// Method names drop JSON-RPC namespacing (`session/new` → `new-session`,
 /// `terminal/create` → `create-terminal`, etc.) because `/` is not a valid
