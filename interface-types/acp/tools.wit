@@ -1,0 +1,215 @@
+package yoshuawuyts:acp@2.0.3;
+
+/// Tool calls, plans, and permission requests.
+///
+/// See: <https://agentclientprotocol.com/protocol/tool-calls>
+///      <https://agentclientprotocol.com/protocol/agent-plan>
+interface tools {
+    use sessions.{session-id};
+    use content.{content-block};
+    use terminals.{terminal-id};
+
+    /// Unique identifier for a tool call within a session.
+    type tool-call-id = string;
+
+    // ------------------------------------------------------------------
+    // Tool calls
+    // ------------------------------------------------------------------
+
+    /// A tool call initiated by the language model and executed by the agent.
+    record tool-call {
+        /// Unique id of this tool call within the session.
+        id: tool-call-id,
+        /// Human-readable title (e.g. `"Reading config.json"`).
+        title: string,
+        /// Category, used by clients to pick icons / display treatment.
+        kind: tool-kind,
+        /// Current execution status.
+        status: tool-call-status,
+        /// Content produced so far.
+        content: list<tool-call-content>,
+        /// File locations this call is touching, for follow-along UI.
+        locations: list<tool-call-location>,
+        /// Raw JSON-encoded input parameters, if the agent wishes to share.
+        raw-input: option<string>,
+        /// Raw JSON-encoded output, if any.
+        raw-output: option<string>,
+    }
+
+    /// An update to an existing tool call. Only changed fields are populated.
+    record tool-call-update {
+        /// Which tool call to update.
+        id: tool-call-id,
+        /// Replace the title.
+        title: option<string>,
+        /// Replace the kind.
+        kind: option<tool-kind>,
+        /// Replace the status.
+        status: option<tool-call-status>,
+        /// Replace the content collection.
+        content: option<list<tool-call-content>>,
+        /// Replace the locations collection.
+        locations: option<list<tool-call-location>>,
+        /// Replace raw input.
+        raw-input: option<string>,
+        /// Replace raw output.
+        raw-output: option<string>,
+    }
+
+    /// Categories of tools.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/tool-calls#creating>
+    enum tool-kind {
+        /// Reading files or data.
+        read,
+        /// Modifying files or content.
+        edit,
+        /// Removing files or data.
+        delete,
+        /// Moving or renaming files.
+        move,
+        /// Searching for information.
+        search,
+        /// Running commands or code.
+        execute,
+        /// Internal reasoning or planning.
+        think,
+        /// Retrieving external data.
+        fetch,
+        /// Anything else.
+        other,
+    }
+
+    /// Lifecycle states of a tool call.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/tool-calls#status>
+    enum tool-call-status {
+        /// Awaiting input streaming or permission.
+        pending,
+        /// Currently running.
+        in-progress,
+        /// Finished successfully.
+        completed,
+        /// Failed with an error.
+        failed,
+    }
+
+    /// Output produced by a tool call.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/tool-calls#content>
+    variant tool-call-content {
+        /// A standard content block.
+        content(content-block),
+        /// A file modification, displayed as a diff.
+        diff(diff),
+        /// A reference to a live terminal created via `create-terminal`.
+        terminal(terminal-id),
+    }
+
+    /// A diff against a single file.
+    record diff {
+        /// Absolute path of the file.
+        path: string,
+        /// Original content. `none` for new files.
+        old-text: option<string>,
+        /// New content after modification.
+        new-text: string,
+    }
+
+    /// A file location a tool call is operating on.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/tool-calls#following-the-agent>
+    record tool-call-location {
+        /// Absolute file path.
+        path: string,
+        /// Optional 1-based line number within the file.
+        line: option<u32>,
+    }
+
+    // ------------------------------------------------------------------
+    // Plans
+    //
+    // See: https://agentclientprotocol.com/protocol/agent-plan
+    // ------------------------------------------------------------------
+
+    /// An execution plan reported by the agent.
+    record plan {
+        /// Tasks the agent intends to accomplish.
+        entries: list<plan-entry>,
+    }
+
+    /// A single planned task.
+    record plan-entry {
+        /// Human-readable description.
+        content: string,
+        /// Importance.
+        priority: plan-entry-priority,
+        /// Lifecycle state.
+        status: plan-entry-status,
+    }
+
+    /// Priority of a plan entry.
+    enum plan-entry-priority {
+        high,
+        medium,
+        low,
+    }
+
+    /// Lifecycle state of a plan entry.
+    enum plan-entry-status {
+        pending,
+        in-progress,
+        completed,
+    }
+
+    // ------------------------------------------------------------------
+    // Permission requests (agent → client)
+    //
+    // See: https://agentclientprotocol.com/protocol/tool-calls#requesting-permission
+    // ------------------------------------------------------------------
+
+    /// Parameters to `request-permission`.
+    record request-permission-request {
+        /// The session this permission request belongs to.
+        session-id: session-id,
+        /// The tool call awaiting approval.
+        tool-call: tool-call-update,
+        /// Choices to present to the user.
+        options: list<permission-option>,
+    }
+
+    /// A choice the user can pick when granting/denying permission.
+    record permission-option {
+        /// Stable id; returned in the response if selected.
+        id: string,
+        /// Human-readable label.
+        name: string,
+        /// UI hint.
+        kind: permission-option-kind,
+    }
+
+    /// UI hint for a permission option.
+    enum permission-option-kind {
+        allow-once,
+        allow-always,
+        reject-once,
+        reject-always,
+    }
+
+    /// Response to `request-permission`.
+    record request-permission-response {
+        /// The user's decision.
+        outcome: permission-outcome,
+    }
+
+    /// Outcome of a permission request.
+    variant permission-outcome {
+        /// The current prompt turn was cancelled before the user responded.
+        /// Clients MUST return this when responding to permission requests
+        /// after receiving `cancel`.
+        cancelled,
+        /// The user picked one of the offered options. The string is the
+        /// `permission-option.id` of the selected option.
+        selected(string),
+    }
+}

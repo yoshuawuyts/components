@@ -1,0 +1,104 @@
+package yoshuawuyts:acp@2.0.3;
+
+/// Prompt turns, streaming session updates, and slash commands.
+///
+/// See: <https://agentclientprotocol.com/protocol/prompt-turn>
+///      <https://agentclientprotocol.com/protocol/slash-commands>
+interface prompts {
+    use sessions.{session-id, session-mode-id, session-info-update};
+    use content.{content-block};
+    use tools.{tool-call, tool-call-update, plan};
+
+    // ------------------------------------------------------------------
+    // Prompt turn
+    // ------------------------------------------------------------------
+
+    /// Parameters to `prompt`.
+    record prompt-request {
+        /// The session this prompt belongs to.
+        session-id: session-id,
+        /// The user message, as a sequence of content blocks.
+        prompt: list<content-block>,
+    }
+
+    /// Response to `prompt`.
+    record prompt-response {
+        /// Why the agent stopped processing this turn.
+        stop-reason: stop-reason,
+    }
+
+    /// Why a prompt turn ended.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/prompt-turn#stop-reasons>
+    enum stop-reason {
+        /// The model finished responding without requesting more tools.
+        end-turn,
+        /// The token limit was reached.
+        max-tokens,
+        /// The agent hit its per-turn request cap.
+        max-turn-requests,
+        /// The agent refused to continue.
+        refusal,
+        /// The client cancelled the turn via `cancel`. Agents MUST return
+        /// this stop reason in response to a `cancel` notification.
+        cancelled,
+    }
+
+    // ------------------------------------------------------------------
+    // Slash commands
+    //
+    // See: https://agentclientprotocol.com/protocol/slash-commands
+    // ------------------------------------------------------------------
+
+    /// Optional input specification for an [`available-command`]. Currently
+    /// only unstructured text input is supported.
+    record available-command-input {
+        /// Hint to display when the input hasn't been provided yet.
+        hint: string,
+    }
+
+    /// A slash command the agent advertises for a session.
+    ///
+    /// Commands are invoked by including their text in a regular `prompt`
+    /// (e.g. `"/web agent client protocol"`).
+    record available-command {
+        /// Command name without the leading slash (e.g. `"web"`).
+        name: string,
+        /// Human-readable description of what the command does.
+        description: string,
+        /// Optional input specification.
+        input: option<available-command-input>,
+    }
+
+    // ------------------------------------------------------------------
+    // Session updates (agent → client notifications)
+    //
+    // See: https://agentclientprotocol.com/protocol/prompt-turn#3-agent-reports-output
+    // ------------------------------------------------------------------
+
+    /// A streaming update sent by the agent during a prompt turn. Variants
+    /// follow the `sessionUpdate` discriminator in the JSON protocol.
+    variant session-update {
+        /// A chunk of the user's message being replayed (e.g. during
+        /// `load-session`).
+        user-message-chunk(content-block),
+        /// A chunk of the agent's response.
+        agent-message-chunk(content-block),
+        /// A chunk of the agent's internal reasoning ("thought").
+        agent-thought-chunk(content-block),
+        /// A new tool call has been initiated.
+        tool-call(tool-call),
+        /// An update to an existing tool call.
+        tool-call-update(tool-call-update),
+        /// The agent's current execution plan.
+        plan(plan),
+        /// The agent switched to a different mode. Carries the new
+        /// `current-mode-id`.
+        current-mode-update(session-mode-id),
+        /// Updated session metadata (title, last-activity timestamp).
+        session-info-update(session-info-update),
+        /// The set of slash commands available in this session. Replaces
+        /// any previously advertised list.
+        available-commands-update(list<available-command>),
+    }
+}

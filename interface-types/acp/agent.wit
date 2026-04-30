@@ -5,17 +5,17 @@ package yoshuawuyts:acp@2.0.3;
 /// Maps to the JSON-RPC methods listed under "Agent" in the protocol
 /// overview: <https://agentclientprotocol.com/protocol/overview#agent>
 interface agent {
-    use types.{
-        initialize-request, initialize-response,
-        authenticate-request,
+    use errors.{error};
+    use init.{initialize-request, initialize-response, authenticate-request};
+    use sessions.{
+        session-id,
         new-session-request, new-session-response,
         load-session-request, load-session-response,
         list-sessions-request, list-sessions-response,
         resume-session-request, resume-session-response,
-        prompt-request, prompt-response,
         set-session-mode-request,
-        session-id, error,
     };
+    use prompts.{prompt-request, prompt-response};
 
     /// Establish the connection. Negotiate protocol version, exchange
     /// capabilities, and identify implementations. Maps to the JSON-RPC
@@ -72,8 +72,6 @@ interface agent {
     /// Cancel any ongoing work for a session and free its resources. Only
     /// available when `agent-capabilities.session-capabilities.close` is
     /// true. Maps to the JSON-RPC `session/close` method.
-    ///
-    /// Equivalent to calling `cancel` and then releasing all session state.
     ///
     /// See: <https://agentclientprotocol.com/protocol/session-setup#closing-active-sessions>
     close-session: func(session-id: session-id) -> result<_, error>;

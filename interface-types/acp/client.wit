@@ -8,14 +8,18 @@ package yoshuawuyts:acp@2.0.3;
 /// `update-session` is a notification (one-way). Everything else is a
 /// request/response pair.
 interface client {
-    use types.{
-        session-id, session-update,
-        request-permission-request, request-permission-response,
+    use errors.{error};
+    use sessions.{session-id};
+    use prompts.{session-update};
+    use tools.{request-permission-request, request-permission-response};
+    use filesystem.{
         read-text-file-request, read-text-file-response,
         write-text-file-request,
+    };
+    use terminals.{
+        terminal-id,
         create-terminal-request, create-terminal-response,
-        terminal-id, terminal-output, terminal-exit-status,
-        error,
+        terminal-output, terminal-exit-status,
     };
 
     /// Notification: the agent reports progress, output, tool calls, or

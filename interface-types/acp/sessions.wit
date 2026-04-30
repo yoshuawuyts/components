@@ -1,0 +1,213 @@
+package yoshuawuyts:acp@2.0.3;
+
+/// Session lifecycle types: identifiers, MCP server configuration, modes, and
+/// new/load/list/resume payloads.
+///
+/// See: <https://agentclientprotocol.com/protocol/session-setup>
+///      <https://agentclientprotocol.com/protocol/session-list>
+///      <https://agentclientprotocol.com/protocol/session-modes>
+interface sessions {
+    /// Unique identifier for an active session, returned by `new-session`.
+    type session-id = string;
+
+    /// Unique identifier for a session mode.
+    type session-mode-id = string;
+
+    // ------------------------------------------------------------------
+    // Common helpers
+    // ------------------------------------------------------------------
+
+    /// An environment variable, used when launching MCP stdio servers or
+    /// terminal commands.
+    record env-var {
+        /// Variable name.
+        name: string,
+        /// Variable value.
+        value: string,
+    }
+
+    /// An HTTP header, used when connecting to MCP HTTP/SSE servers.
+    record http-header {
+        /// Header name.
+        name: string,
+        /// Header value.
+        value: string,
+    }
+
+    // ------------------------------------------------------------------
+    // MCP server configuration
+    //
+    // See: https://agentclientprotocol.com/protocol/session-setup#mcp-servers
+    // ------------------------------------------------------------------
+
+    /// Configuration for connecting to an MCP server.
+    variant mcp-server {
+        /// Stdio transport (always supported).
+        stdio(mcp-server-stdio),
+        /// HTTP transport (requires `agent-capabilities.mcp-capabilities.http`).
+        http(mcp-server-http),
+        /// SSE transport (requires `agent-capabilities.mcp-capabilities.sse`).
+        sse(mcp-server-sse),
+    }
+
+    record mcp-server-stdio {
+        /// Human-readable name.
+        name: string,
+        /// Absolute path to the MCP server executable.
+        command: string,
+        /// Command-line arguments.
+        args: list<string>,
+        /// Environment variables.
+        env: list<env-var>,
+    }
+
+    record mcp-server-http {
+        /// Human-readable name.
+        name: string,
+        /// URL of the MCP server.
+        url: string,
+        /// HTTP headers to include on every request.
+        headers: list<http-header>,
+    }
+
+    record mcp-server-sse {
+        /// Human-readable name.
+        name: string,
+        /// SSE endpoint URL.
+        url: string,
+        /// HTTP headers to include when establishing the connection.
+        headers: list<http-header>,
+    }
+
+    // ------------------------------------------------------------------
+    // Session modes
+    //
+    // See: https://agentclientprotocol.com/protocol/session-modes
+    // ------------------------------------------------------------------
+
+    /// A mode the agent can operate in within a session. Modes typically
+    /// affect system prompts, tool availability, and permission behavior.
+    record session-mode {
+        /// Stable identifier for this mode.
+        id: session-mode-id,
+        /// Human-readable display name.
+        name: string,
+        /// Optional longer description.
+        description: option<string>,
+    }
+
+    /// The set of modes available for a session and which one is active.
+    record session-mode-state {
+        /// The currently active mode.
+        current-mode-id: session-mode-id,
+        /// All modes the agent can operate in for this session.
+        available-modes: list<session-mode>,
+    }
+
+    /// Parameters to `set-session-mode`.
+    record set-session-mode-request {
+        /// The session whose mode is being changed.
+        session-id: session-id,
+        /// The mode to switch to. MUST be one of the `available-modes`.
+        mode-id: session-mode-id,
+    }
+
+    // ------------------------------------------------------------------
+    // New / load
+    //
+    // See: https://agentclientprotocol.com/protocol/session-setup
+    // ------------------------------------------------------------------
+
+    /// Parameters to `new-session`.
+    record new-session-request {
+        /// The working directory for this session. MUST be absolute.
+        cwd: string,
+        /// MCP servers the agent should connect to for this session.
+        mcp-servers: list<mcp-server>,
+    }
+
+    /// Response to `new-session`.
+    record new-session-response {
+        /// The id assigned to the new session.
+        session-id: session-id,
+        /// Modes the agent can operate in for this session, if any.
+        modes: option<session-mode-state>,
+    }
+
+    /// Parameters to `load-session` (only valid if
+    /// `agent-capabilities.load-session` is true).
+    record load-session-request {
+        /// The id of the session to resume.
+        session-id: session-id,
+        /// The working directory for the session.
+        cwd: string,
+        /// MCP servers to (re)connect to.
+        mcp-servers: list<mcp-server>,
+    }
+
+    /// Response to `load-session`.
+    record load-session-response {
+        /// Modes the agent can operate in for this session, if any.
+        modes: option<session-mode-state>,
+    }
+
+    // ------------------------------------------------------------------
+    // List / resume / close
+    // ------------------------------------------------------------------
+
+    /// Metadata about a session, returned by `list-sessions` and pushed via
+    /// `session-info-update` notifications.
+    record session-info {
+        /// The session's id.
+        session-id: session-id,
+        /// Working directory for the session (absolute path).
+        cwd: string,
+        /// Optional human-readable title (often agent-generated).
+        title: option<string>,
+        /// Optional ISO 8601 timestamp of last activity.
+        updated-at: option<string>,
+    }
+
+    /// Parameters to `list-sessions`. All fields are optional; an empty
+    /// request returns the first page of sessions.
+    record list-sessions-request {
+        /// Filter by working directory (absolute path).
+        cwd: option<string>,
+        /// Opaque cursor from a previous response's `next-cursor` field.
+        cursor: option<string>,
+    }
+
+    /// Response to `list-sessions`.
+    record list-sessions-response {
+        /// Discovered sessions. May be empty.
+        sessions: list<session-info>,
+        /// Opaque cursor for the next page, if more results exist.
+        next-cursor: option<string>,
+    }
+
+    /// Parameters to `resume-session`. Reconnects to an existing session
+    /// without replaying conversation history (unlike `load-session`).
+    record resume-session-request {
+        /// The id of the session to resume.
+        session-id: session-id,
+        /// The working directory for the session.
+        cwd: string,
+        /// MCP servers to (re)connect to.
+        mcp-servers: list<mcp-server>,
+    }
+
+    /// Response to `resume-session`.
+    record resume-session-response {
+        /// Modes the agent can operate in for this session, if any.
+        modes: option<session-mode-state>,
+    }
+
+    /// Update to a session's metadata, pushed by the agent. Only included
+    /// fields are changed; omitted fields are left unchanged.
+    record session-info-update {
+        /// New title. `none` means "unchanged".
+        title: option<string>,
+        /// New ISO 8601 last-activity timestamp. `none` means "unchanged".
+        updated-at: option<string>,
+    }
+}
