@@ -10,6 +10,8 @@ interface agent {
         authenticate-request,
         new-session-request, new-session-response,
         load-session-request, load-session-response,
+        list-sessions-request, list-sessions-response,
+        resume-session-request, resume-session-response,
         prompt-request, prompt-response,
         set-session-mode-request,
         session-id, error,
@@ -46,6 +48,35 @@ interface agent {
     ///
     /// See: <https://agentclientprotocol.com/protocol/session-setup#loading-sessions>
     load-session: func(req: load-session-request) -> result<load-session-response, error>;
+
+    /// Discover existing sessions known to the agent. Only available when
+    /// `agent-capabilities.session-capabilities.list` is true. Maps to the
+    /// JSON-RPC `session/list` method.
+    ///
+    /// Uses cursor-based pagination via the opaque `cursor` field.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/session-list>
+    list-sessions: func(req: list-sessions-request) -> result<list-sessions-response, error>;
+
+    /// Reconnect to an existing session without replaying conversation
+    /// history. Only available when
+    /// `agent-capabilities.session-capabilities.resume` is true. Maps to
+    /// the JSON-RPC `session/resume` method.
+    ///
+    /// Unlike `load-session`, the agent MUST NOT stream history via
+    /// `update-session` before responding.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/session-setup#resuming-sessions>
+    resume-session: func(req: resume-session-request) -> result<resume-session-response, error>;
+
+    /// Cancel any ongoing work for a session and free its resources. Only
+    /// available when `agent-capabilities.session-capabilities.close` is
+    /// true. Maps to the JSON-RPC `session/close` method.
+    ///
+    /// Equivalent to calling `cancel` and then releasing all session state.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/session-setup#closing-active-sessions>
+    close-session: func(session-id: session-id) -> result<_, error>;
 
     /// Switch the active mode for a session. Maps to the JSON-RPC
     /// `session/set_mode` method. The `mode-id` MUST be one of the modes

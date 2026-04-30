@@ -162,6 +162,18 @@ interface types {
         sse: bool,
     }
 
+    /// Capabilities related to session lifecycle methods.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/session-setup>
+    record session-capabilities {
+        /// Whether the agent supports `list-sessions`.
+        %list: bool,
+        /// Whether the agent supports `resume-session`.
+        resume: bool,
+        /// Whether the agent supports `close-session`.
+        close: bool,
+    }
+
     /// Capabilities advertised by the agent during `initialize`.
     ///
     /// See: <https://agentclientprotocol.com/protocol/initialization#agent-capabilities>
@@ -172,6 +184,8 @@ interface types {
         prompt-capabilities: prompt-capabilities,
         /// MCP transports the agent supports.
         mcp-capabilities: mcp-capabilities,
+        /// Optional session lifecycle capabilities (list/resume/close).
+        session-capabilities: session-capabilities,
     }
 
     /// An authentication method the agent supports.
@@ -359,6 +373,100 @@ interface types {
     }
 
     // ------------------------------------------------------------------
+    // Session list / resume / close
+    //
+    // See: https://agentclientprotocol.com/protocol/session-list
+    //      https://agentclientprotocol.com/protocol/session-setup#resuming-sessions
+    //      https://agentclientprotocol.com/protocol/session-setup#closing-active-sessions
+    // ------------------------------------------------------------------
+
+    /// Metadata about a session, returned by `list-sessions` and pushed via
+    /// `session-info-update` notifications.
+    record session-info {
+        /// The session's id.
+        session-id: session-id,
+        /// Working directory for the session (absolute path).
+        cwd: string,
+        /// Optional human-readable title (often agent-generated).
+        title: option<string>,
+        /// Optional ISO 8601 timestamp of last activity.
+        updated-at: option<string>,
+    }
+
+    /// Parameters to `list-sessions`. All fields are optional; an empty
+    /// request returns the first page of sessions.
+    record list-sessions-request {
+        /// Filter by working directory (absolute path). Only sessions with a
+        /// matching `cwd` are returned.
+        cwd: option<string>,
+        /// Opaque cursor from a previous response's `next-cursor` field.
+        cursor: option<string>,
+    }
+
+    /// Response to `list-sessions`.
+    record list-sessions-response {
+        /// Discovered sessions. May be empty.
+        sessions: list<session-info>,
+        /// Opaque cursor for the next page, if more results exist.
+        next-cursor: option<string>,
+    }
+
+    /// Parameters to `resume-session`. Reconnects to an existing session
+    /// without replaying conversation history (unlike `load-session`).
+    record resume-session-request {
+        /// The id of the session to resume.
+        session-id: session-id,
+        /// The working directory for the session.
+        cwd: string,
+        /// MCP servers to (re)connect to.
+        mcp-servers: list<mcp-server>,
+    }
+
+    /// Response to `resume-session`.
+    record resume-session-response {
+        /// Modes the agent can operate in for this session, if any.
+        modes: option<session-mode-state>,
+    }
+
+    /// Update to a session's metadata, pushed by the agent via
+    /// `update-session`. Only included fields are changed; omitted fields
+    /// are left unchanged.
+    record session-info-update {
+        /// New title. `none` means "unchanged".
+        title: option<string>,
+        /// New ISO 8601 last-activity timestamp. `none` means "unchanged".
+        updated-at: option<string>,
+    }
+
+    // ------------------------------------------------------------------
+    // Slash commands
+    //
+    // See: https://agentclientprotocol.com/protocol/slash-commands
+    // ------------------------------------------------------------------
+
+    /// Optional input specification for an [`available-command`]. Currently
+    /// only unstructured text input is supported.
+    record available-command-input {
+        /// Hint to display when the input hasn't been provided yet (e.g.
+        /// `"query to search for"`).
+        hint: string,
+    }
+
+    /// A slash command the agent advertises for a session.
+    ///
+    /// Commands are invoked by including their text in a regular `prompt`
+    /// (e.g. `"/web agent client protocol"`); the agent recognizes the
+    /// prefix and processes it accordingly.
+    record available-command {
+        /// Command name without the leading slash (e.g. `"web"`, `"test"`).
+        name: string,
+        /// Human-readable description of what the command does.
+        description: string,
+        /// Optional input specification.
+        input: option<available-command-input>,
+    }
+
+    // ------------------------------------------------------------------
     // Content blocks
     //
     // See: https://agentclientprotocol.com/protocol/content
@@ -513,6 +621,12 @@ interface types {
         /// The agent switched to a different mode. Carries the new
         /// `current-mode-id`.
         current-mode-update(session-mode-id),
+        /// Updated session metadata (title, last-activity timestamp).
+        session-info-update(session-info-update),
+        /// The set of slash commands available in this session. Replaces
+        /// any previously advertised list. Agents may send this multiple
+        /// times during a session as commands become (un)available.
+        available-commands-update(list<available-command>),
     }
 
     // ------------------------------------------------------------------
