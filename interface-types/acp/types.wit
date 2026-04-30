@@ -12,10 +12,10 @@ package yoshuawuyts:acp@2.0.3;
 ///
 /// We intentionally model only the **core, stable** surface of ACP: connection
 /// initialization, session setup, prompt turns, tool calls (with permission),
-/// file system access, and terminals. Extension points such as `_meta`, slash
-/// commands, session modes/list/resume/close, MCP-over-ACP, and authentication
-/// methods are either omitted or modelled minimally; they can be layered on
-/// later without breaking the core.
+/// session modes, file system access, and terminals. Extension points such as
+/// `_meta`, slash commands, session list/resume/close, MCP-over-ACP, and
+/// authentication methods are either omitted or modelled minimally; they can
+/// be layered on later without breaking the core.
 ///
 /// All file paths in this protocol are absolute. Line numbers are 1-based.
 ///
@@ -93,6 +93,9 @@ interface types {
 
     /// Unique identifier for a terminal created via the terminal API.
     type terminal-id = string;
+
+    /// Unique identifier for a session mode.
+    type session-mode-id = string;
 
     // ------------------------------------------------------------------
     // Implementation info
@@ -298,6 +301,9 @@ interface types {
     record new-session-response {
         /// The id assigned to the new session.
         session-id: session-id,
+        /// Modes the agent can operate in for this session, if any. Clients
+        /// typically surface this as a mode/model picker.
+        modes: option<session-mode-state>,
     }
 
     /// Parameters to `load-session` (only valid if
@@ -309,6 +315,47 @@ interface types {
         cwd: string,
         /// MCP servers to (re)connect to.
         mcp-servers: list<mcp-server>,
+    }
+
+    /// Response to `load-session`.
+    record load-session-response {
+        /// Modes the agent can operate in for this session, if any.
+        modes: option<session-mode-state>,
+    }
+
+    // ------------------------------------------------------------------
+    // Session modes
+    //
+    // See: https://agentclientprotocol.com/protocol/session-modes
+    // ------------------------------------------------------------------
+
+    /// A mode the agent can operate in within a session. Modes typically
+    /// affect system prompts, tool availability, and permission behavior.
+    /// Clients commonly render these as a mode/model picker.
+    record session-mode {
+        /// Stable identifier for this mode.
+        id: session-mode-id,
+        /// Human-readable display name.
+        name: string,
+        /// Optional longer description.
+        description: option<string>,
+    }
+
+    /// The set of modes available for a session and which one is active.
+    record session-mode-state {
+        /// The currently active mode.
+        current-mode-id: session-mode-id,
+        /// All modes the agent can operate in for this session.
+        available-modes: list<session-mode>,
+    }
+
+    /// Parameters to `set-session-mode`.
+    record set-session-mode-request {
+        /// The session whose mode is being changed.
+        session-id: session-id,
+        /// The mode to switch to. MUST be one of the `available-modes`
+        /// returned at session creation/load.
+        mode-id: session-mode-id,
     }
 
     // ------------------------------------------------------------------
@@ -463,6 +510,9 @@ interface types {
         tool-call-update(tool-call-update),
         /// The agent's current execution plan.
         plan(plan),
+        /// The agent switched to a different mode. Carries the new
+        /// `current-mode-id`.
+        current-mode-update(session-mode-id),
     }
 
     // ------------------------------------------------------------------

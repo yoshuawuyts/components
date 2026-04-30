@@ -9,8 +9,9 @@ interface agent {
         initialize-request, initialize-response,
         authenticate-request,
         new-session-request, new-session-response,
-        load-session-request,
+        load-session-request, load-session-response,
         prompt-request, prompt-response,
+        set-session-mode-request,
         session-id, error,
     };
 
@@ -44,7 +45,14 @@ interface agent {
     /// the client interface before this call returns.
     ///
     /// See: <https://agentclientprotocol.com/protocol/session-setup#loading-sessions>
-    load-session: func(req: load-session-request) -> result<_, error>;
+    load-session: func(req: load-session-request) -> result<load-session-response, error>;
+
+    /// Switch the active mode for a session. Maps to the JSON-RPC
+    /// `session/set_mode` method. The `mode-id` MUST be one of the modes
+    /// returned in `new-session-response.modes` or `load-session-response.modes`.
+    ///
+    /// See: <https://agentclientprotocol.com/protocol/session-modes>
+    set-session-mode: func(req: set-session-mode-request) -> result<_, error>;
 
     /// Send a user prompt and run a prompt turn to completion. Maps to the
     /// JSON-RPC `session/prompt` method.
