@@ -1,0 +1,25 @@
+[package]
+name = "embed-index"
+license = "Apache-2.0"
+repository = "https://github.com/yoshuawuyts/components"
+documentation = "https://docs.rs/embed-index"
+description = "Wasm Components"
+readme = "README.md"
+edition = "2018"
+keywords = []
+categories = []
+authors = ["Yoshua Wuyts <rust@yosh.is>"]
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+
+[dependencies]
+wit-bindgen = "0.36"
+
+[dev-dependencies]
+
+[lints]
+workspace = true

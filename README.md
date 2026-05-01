@@ -7,10 +7,11 @@
 
 ## Components
 
-| Name        | Description                                          |
-| ----------- | ---------------------------------------------------- |
-| `wordmark`  | Convert between Markdown and Word (`.docx`) documents |
-| `tablemark` | Convert between Markdown tables and `.xlsx` workbooks |
+| Name          | Description                                          |
+| ------------- | ---------------------------------------------------- |
+| `wordmark`    | Convert between Markdown and Word (`.docx`) documents |
+| `tablemark`   | Convert between Markdown tables and `.xlsx` workbooks |
+| `embed-index` | Build and query a flat ANN-style vector index over host-supplied embeddings |
 
 ## Interfaces
 

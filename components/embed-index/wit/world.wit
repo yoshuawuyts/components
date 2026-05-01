@@ -1,0 +1,39 @@
+package yoshuawuyts:embed-index;
+
+world embed-index {
+    /// A single dense vector embedding.
+    ///
+    /// Hosts are responsible for producing these vectors; this component does
+    /// not perform any embedding modeling itself.
+    record vector {
+        /// Dense embedding values. All vectors passed to `build` must share
+        /// the same length.
+        values: list<f32>,
+    }
+
+    /// A single nearest-neighbor result returned by `query`.
+    record hit {
+        /// Position of the matching vector in the original `build` input
+        /// (zero-based).
+        index: u32,
+        /// Cosine similarity between the query and the matching vector,
+        /// in the range `[-1.0, 1.0]`. Higher means more similar.
+        score: f32,
+    }
+
+    /// Build an index over the supplied vectors and return its serialized
+    /// representation as opaque bytes. The host is responsible for storing
+    /// and later passing these bytes back to `query`.
+    ///
+    /// All input vectors must be non-empty and share the same dimensionality.
+    export build: func(vectors: list<vector>) -> result<list<u8>, string>;
+
+    /// Query a previously built index for the `k` vectors most similar to
+    /// `query` under cosine similarity. Results are returned in descending
+    /// order of similarity. At most `k` hits are returned; if the index
+    /// contains fewer than `k` vectors, all of them are returned.
+    ///
+    /// The query vector must have the same dimensionality as the vectors the
+    /// index was built from.
+    export query: func(index: list<u8>, query: list<f32>, k: u32) -> result<list<hit>, string>;
+}
