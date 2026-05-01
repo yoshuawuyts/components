@@ -70,11 +70,10 @@ struct Index {
 impl Index {
     /// Build an index from a slice of input vectors.
     fn build(vectors: &[Vector]) -> Result<Self, String> {
-        if vectors.is_empty() {
-            return Err("cannot build an index from zero vectors".to_owned());
-        }
-        let first = vectors.first().ok_or("missing first vector")?;
-        let dim = first.values.len();
+        let dim = match vectors.first() {
+            Some(v) => v.values.len(),
+            None => return Err("cannot build an index from zero vectors".to_owned()),
+        };
         if dim == 0 {
             return Err("vectors must have a non-zero dimensionality".to_owned());
         }
