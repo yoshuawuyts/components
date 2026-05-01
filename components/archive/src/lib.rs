@@ -98,7 +98,14 @@ fn extract_gzip(input: &[u8]) -> Result<Vec<FileEntry>, String> {
         .header()
         .and_then(|h| h.filename())
         .and_then(|raw| std::str::from_utf8(raw).ok())
-        .map(|s| s.strip_suffix(".gz").unwrap_or(s).to_owned());
+        .map(|s| {
+            // Strip a trailing `.gz` extension (case-insensitive).
+            if s.len() > 3 && s[s.len() - 3..].eq_ignore_ascii_case(".gz") {
+                s[..s.len() - 3].to_owned()
+            } else {
+                s.to_owned()
+            }
+        });
 
     let mut decompressed = Vec::new();
     decoder
