@@ -1,0 +1,61 @@
+package yoshuawuyts:ocr;
+
+world ocr {
+    /// Bounding box for a recognized region, in source-pixel coordinates.
+    ///
+    /// For PDF inputs the coordinates are in pixels of the rendered page,
+    /// with the origin at the top-left corner.
+    record bounding-box {
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    }
+
+    /// A single word recognized by OCR with its position and confidence.
+    record word {
+        /// The recognized text for this word.
+        text: string,
+        /// Position of the word in the source image.
+        bbox: bounding-box,
+        /// Confidence as a percentage in the range 0..=100.
+        /// Use 0 if the backend does not report confidence values.
+        confidence: u8,
+    }
+
+    /// The textual format of `text` in `ocr-output`.
+    enum output-format {
+        /// Plain UTF-8 text with newlines preserved between detected lines.
+        plain-text,
+        /// GitHub-flavored Markdown. Backends may emit headings, paragraphs,
+        /// and lists when document structure can be detected; otherwise the
+        /// output degrades gracefully to plain paragraphs.
+        markdown,
+    }
+
+    /// Options controlling extraction.
+    record extract-options {
+        /// Output text format.
+        format: output-format,
+        /// If true, populate `words` with per-word bounding boxes.
+        /// Backends that do not support per-word output may leave `words`
+        /// empty even when this is set.
+        include-words: bool,
+    }
+
+    /// The result of an OCR extraction.
+    record ocr-output {
+        /// Recognized text in the requested `output-format`.
+        text: string,
+        /// Per-word records with bounding boxes, when requested and
+        /// available. Empty when `include-words` is false or unsupported.
+        words: list<word>,
+    }
+
+    /// Extract text from an image (PNG or JPEG) or a single-page PDF.
+    ///
+    /// The input is autodetected from its leading bytes. On unrecognised
+    /// or malformed input, returns an error string suitable for surfacing
+    /// to the caller.
+    export extract: func(input: list<u8>, options: extract-options) -> result<ocr-output, string>;
+}

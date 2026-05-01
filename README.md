@@ -11,6 +11,7 @@
 | ----------- | ---------------------------------------------------- |
 | `wordmark`  | Convert between Markdown and Word (`.docx`) documents |
 | `tablemark` | Convert between Markdown tables and `.xlsx` workbooks |
+| `ocr`       | Extract UTF-8 text or Markdown from images (PNG/JPEG) and PDFs |
 
 ## Interfaces
 

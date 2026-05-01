@@ -10,6 +10,7 @@ on:
         options:
           - wordmark
           - tablemark
+          - ocr
           - docs
           - acp
       version:
@@ -22,7 +23,7 @@ env:
 
 jobs:
   publish-component:
-    if: ${{ inputs.target == 'wordmark' || inputs.target == 'tablemark' }}
+    if: ${{ inputs.target == 'wordmark' || inputs.target == 'tablemark' || inputs.target == 'ocr' }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -45,6 +46,7 @@ jobs:
           case "${COMPONENT_NAME}" in
             wordmark)  desc="Convert between Markdown and Word documents" ;;
             tablemark) desc="Convert between Markdown tables and XLSX workbooks" ;;
+            ocr)       desc="Extract UTF-8 text or Markdown from images and PDFs" ;;
             *) echo "Unknown component: ${COMPONENT_NAME}" >&2; exit 1 ;;
           esac
           echo "COMPONENT_DESCRIPTION=${desc}" >> "$GITHUB_ENV"
