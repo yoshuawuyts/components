@@ -1,0 +1,17 @@
+package yoshuawuyts:csvmark;
+
+world csvmark {
+    /// Convert a CSV document to a GitHub-flavored Markdown table.
+    ///
+    /// The first row of the CSV is treated as the table header. Cells are
+    /// escaped so that pipes (`|`) and embedded line breaks do not break the
+    /// resulting table.
+    export csv-to-md: func(input: string) -> result<string, string>;
+
+    /// Convert a Markdown document containing a GitHub-flavored Markdown
+    /// table to a CSV document.
+    ///
+    /// The first table found in the input is converted. Cells containing
+    /// commas, quotes, or line breaks are quoted using standard CSV rules.
+    export md-to-csv: func(input: string) -> result<string, string>;
+}
