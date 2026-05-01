@@ -1,0 +1,39 @@
+package yoshuawuyts:feedmark;
+
+world feedmark {
+    /// A single feed entry, normalized across RSS, Atom and JSON Feed.
+    record entry {
+        /// The entry title in plain text. Empty if the feed omits a title.
+        title: string,
+        /// The canonical link to the entry, if any.
+        link: option<string>,
+        /// A short summary or description of the entry, in plain text.
+        summary: option<string>,
+        /// The full content of the entry, in plain text.
+        content: option<string>,
+        /// The publication timestamp as an RFC 3339 string, if available.
+        published: option<string>,
+        /// The entry author's display name, if available.
+        author: option<string>,
+    }
+
+    /// A normalized feed.
+    record feed {
+        /// The feed title in plain text. Empty if the feed omits a title.
+        title: string,
+        /// A short description of the feed, if any.
+        description: option<string>,
+        /// The canonical link to the feed's homepage, if any.
+        link: option<string>,
+        /// The feed's entries, in the order returned by the source feed.
+        entries: list<entry>,
+    }
+
+    /// Parse the bytes of an RSS, Atom or JSON Feed document into a
+    /// normalized [`feed`]. The format is auto-detected from the input.
+    export parse: func(input: string) -> result<feed, string>;
+
+    /// Parse a feed and render a Markdown digest summarising its entries.
+    /// The format is auto-detected from the input.
+    export to-markdown: func(input: string) -> result<string, string>;
+}
