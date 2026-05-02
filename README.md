@@ -19,7 +19,7 @@ WIT interface definitions (no component implementation).
 | Name    | Description                                                       |
 | ------- | ----------------------------------------------------------------- |
 | `acp`   | WIT definition of the [Agent Client Protocol][acp]                |
-| `color` | WIT definition of CSS color types and a single-function converter |
+| `color` | WIT definition of CSS color types and a resource-based converter  |
 
 [acp]: https://agentclientprotocol.com
 
