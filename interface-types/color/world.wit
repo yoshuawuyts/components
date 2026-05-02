@@ -1,0 +1,174 @@
+package yoshuawuyts:color@0.1.0;
+
+/// Shared color types used by every interface in this package.
+interface types {
+    /// sRGB color components, each in the range [0.0, 1.0].
+    record srgb {
+        red: f32,
+        green: f32,
+        blue: f32,
+    }
+
+    /// HSL color: hue in degrees [0.0, 360.0), saturation and lightness in
+    /// [0.0, 1.0].
+    record hsl {
+        hue: f32,
+        saturation: f32,
+        lightness: f32,
+    }
+
+    /// HWB color: hue in degrees [0.0, 360.0), whiteness and blackness in
+    /// [0.0, 1.0].
+    record hwb {
+        hue: f32,
+        whiteness: f32,
+        blackness: f32,
+    }
+
+    /// CIE L*a*b* color: lightness in [0.0, 100.0], a* and b* typically in
+    /// [-128.0, 127.0].
+    record lab {
+        lightness: f32,
+        a: f32,
+        b: f32,
+    }
+
+    /// CIE LCH (cylindrical L*a*b*) color: lightness in [0.0, 100.0], chroma
+    /// >= 0.0, hue in degrees [0.0, 360.0).
+    record lch {
+        lightness: f32,
+        chroma: f32,
+        hue: f32,
+    }
+
+    /// Oklab perceptual color: lightness in [0.0, 1.0], a and b roughly in
+    /// [-0.5, 0.5].
+    ///
+    /// See: <https://bottosson.github.io/posts/oklab/>
+    record oklab {
+        lightness: f32,
+        a: f32,
+        b: f32,
+    }
+
+    /// Oklch color (cylindrical Oklab, also called OKHCL): lightness in
+    /// [0.0, 1.0], chroma >= 0.0, hue in degrees [0.0, 360.0).
+    ///
+    /// See: <https://bottosson.github.io/posts/oklab/>
+    record oklch {
+        lightness: f32,
+        chroma: f32,
+        hue: f32,
+    }
+
+    /// Okhsl color (HSL-like perceptual encoding of the Oklab color space):
+    /// hue in degrees [0.0, 360.0), saturation and lightness in [0.0, 1.0].
+    ///
+    /// See: <https://bottosson.github.io/posts/colorpicker/>
+    record okhsl {
+        hue: f32,
+        saturation: f32,
+        lightness: f32,
+    }
+
+    /// Errors that may occur when constructing a `color`.
+    variant color-error {
+        /// A hex string could not be parsed; carries the invalid input.
+        invalid-hex(string),
+
+        /// A color component is outside its valid range; carries a
+        /// human-readable description of which component and what range is
+        /// expected.
+        out-of-range(string),
+    }
+}
+
+/// Color conversion interface.
+///
+/// Conversions are exposed via a `color` resource with one static constructor
+/// per input space (`from-*`) and one instance method per output space
+/// (`to-*`). This yields `M + N` entry points but `M × N` conversion paths,
+/// avoiding the combinatorial explosion of pairwise helpers while still
+/// letting callers convert from any space to any other.
+///
+/// Example (in pseudo-code):
+///   let c = color.from-hex("#ff8800")?;
+///   let oklch = c.to-oklch();
+interface conversion {
+    use types.{srgb, hsl, hwb, lab, lch, oklab, oklch, okhsl, color-error};
+
+    /// An opaque color value. Construct with one of the `from-*` static
+    /// methods, then read out in any space using the `to-*` methods.
+    resource color {
+        /// Parse a hexadecimal sRGB string of the form `"#RGB"`, `"#RGBA"`,
+        /// `"#RRGGBB"`, or `"#RRGGBBAA"`. The leading `#` is required.
+        ///
+        /// If the hex string encodes an alpha component it is preserved;
+        /// otherwise the resulting color is fully opaque.
+        from-hex: static func(value: string) -> result<color, color-error>;
+
+        /// Construct from sRGB components, with explicit alpha in [0.0, 1.0].
+        from-rgb: static func(value: srgb, alpha: f32) -> result<color, color-error>;
+
+        /// Construct from HSL components, with explicit alpha in [0.0, 1.0].
+        from-hsl: static func(value: hsl, alpha: f32) -> result<color, color-error>;
+
+        /// Construct from HWB components, with explicit alpha in [0.0, 1.0].
+        from-hwb: static func(value: hwb, alpha: f32) -> result<color, color-error>;
+
+        /// Construct from CIE L*a*b* components, with explicit alpha in
+        /// [0.0, 1.0].
+        from-lab: static func(value: lab, alpha: f32) -> result<color, color-error>;
+
+        /// Construct from CIE LCH components, with explicit alpha in
+        /// [0.0, 1.0].
+        from-lch: static func(value: lch, alpha: f32) -> result<color, color-error>;
+
+        /// Construct from Oklab components, with explicit alpha in [0.0, 1.0].
+        from-oklab: static func(value: oklab, alpha: f32) -> result<color, color-error>;
+
+        /// Construct from Oklch (OKHCL) components, with explicit alpha in
+        /// [0.0, 1.0].
+        from-oklch: static func(value: oklch, alpha: f32) -> result<color, color-error>;
+
+        /// Construct from Okhsl components, with explicit alpha in [0.0, 1.0].
+        from-okhsl: static func(value: okhsl, alpha: f32) -> result<color, color-error>;
+
+        /// The alpha channel in [0.0, 1.0]. 1.0 means fully opaque.
+        alpha: func() -> f32;
+
+        /// Render as a hexadecimal sRGB string. Includes an alpha component
+        /// (`"#RRGGBBAA"`) when `alpha` is less than 1.0; otherwise returns
+        /// `"#RRGGBB"`.
+        to-hex: func() -> string;
+
+        /// Convert to sRGB.
+        to-rgb: func() -> srgb;
+
+        /// Convert to HSL.
+        to-hsl: func() -> hsl;
+
+        /// Convert to HWB.
+        to-hwb: func() -> hwb;
+
+        /// Convert to CIE L*a*b*.
+        to-lab: func() -> lab;
+
+        /// Convert to CIE LCH.
+        to-lch: func() -> lch;
+
+        /// Convert to Oklab.
+        to-oklab: func() -> oklab;
+
+        /// Convert to Oklch (OKHCL).
+        to-oklch: func() -> oklch;
+
+        /// Convert to Okhsl.
+        to-okhsl: func() -> okhsl;
+    }
+}
+
+/// Implemented by any component that provides color conversion.
+world color-converter {
+    export conversion;
+}
