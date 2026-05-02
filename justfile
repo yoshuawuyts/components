@@ -14,6 +14,7 @@ build-wit:
     mkdir -p target/wit
     wkg wit build -d interface-types/docs -o target/wit/docs.wasm
     wkg wit build -d interface-types/acp -o target/wit/acp.wasm
+    wkg wit build -d interface-types/color -o target/wit/color.wasm
 
 # Trigger the `Publish Component` workflow on CI for a single target at the
 # given version, then watch the resulting run until it completes.
@@ -29,7 +30,7 @@ publish target version:
 # Skips non-semver tags (e.g. `latest`). Prints `<package>: <version>` per line,
 # or `<package>: -` if no semver tag has been published yet.
 versions:
-    @for pkg in wordmark tablemark docs acp; do \
+    @for pkg in wordmark tablemark docs acp color; do \
         latest=$(gh api -H "Accept: application/vnd.github+json" \
             "/users/yoshuawuyts/packages/container/components%2F$pkg/versions" \
             --jq '[.[].metadata.container.tags[]? | select(test("^v?[0-9]+\\.[0-9]+\\.[0-9]+([-+].*)?$"))] | unique | .[]' 2>/dev/null \

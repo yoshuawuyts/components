@@ -1,0 +1,166 @@
+package yoshuawuyts:color@0.1.0;
+
+/// Shared color types used by every interface in this package.
+interface types {
+    /// sRGB color components, each in the range [0.0, 1.0].
+    record srgb {
+        red: f32,
+        green: f32,
+        blue: f32,
+    }
+
+    /// HSL color: hue in degrees [0.0, 360.0), saturation and lightness in
+    /// [0.0, 1.0].
+    record hsl {
+        hue: f32,
+        saturation: f32,
+        lightness: f32,
+    }
+
+    /// HWB color: hue in degrees [0.0, 360.0), whiteness and blackness in
+    /// [0.0, 1.0].
+    record hwb {
+        hue: f32,
+        whiteness: f32,
+        blackness: f32,
+    }
+
+    /// CIE L*a*b* color: lightness in [0.0, 100.0], a* and b* typically in
+    /// [-128.0, 127.0].
+    record lab {
+        lightness: f32,
+        a: f32,
+        b: f32,
+    }
+
+    /// CIE LCH (cylindrical L*a*b*) color: lightness in [0.0, 100.0], chroma
+    /// >= 0.0, hue in degrees [0.0, 360.0).
+    record lch {
+        lightness: f32,
+        chroma: f32,
+        hue: f32,
+    }
+
+    /// Oklab perceptual color: lightness in [0.0, 1.0], a and b roughly in
+    /// [-0.5, 0.5].
+    ///
+    /// See: <https://bottosson.github.io/posts/oklab/>
+    record oklab {
+        lightness: f32,
+        a: f32,
+        b: f32,
+    }
+
+    /// Oklch color (cylindrical Oklab, also called OKHCL): lightness in
+    /// [0.0, 1.0], chroma >= 0.0, hue in degrees [0.0, 360.0).
+    ///
+    /// See: <https://bottosson.github.io/posts/oklab/>
+    record oklch {
+        lightness: f32,
+        chroma: f32,
+        hue: f32,
+    }
+
+    /// Okhsl color (HSL-like perceptual encoding of the Oklab color space):
+    /// hue in degrees [0.0, 360.0), saturation and lightness in [0.0, 1.0].
+    ///
+    /// See: <https://bottosson.github.io/posts/colorpicker/>
+    record okhsl {
+        hue: f32,
+        saturation: f32,
+        lightness: f32,
+    }
+
+    /// A color value in one of the supported CSS color spaces, with an
+    /// optional alpha channel.
+    ///
+    /// Encoding colors as a tagged union avoids the combinatorial explosion of
+    /// M×N individual conversion functions: callers wrap their value in the
+    /// appropriate case and pass it to `convert` with the desired target space.
+    record color {
+        /// The color data in its native space.
+        space: color-space,
+        /// Alpha channel in [0.0, 1.0] — 1.0 means fully opaque.
+        alpha: f32,
+    }
+
+    /// The color data for a particular color space.
+    variant color-space {
+        /// Hexadecimal sRGB string, e.g. `"#RGB"`, `"#RGBA"`, `"#RRGGBB"`, or
+        /// `"#RRGGBBAA"`. The leading `#` is required.
+        ///
+        /// When the hex string encodes an alpha component it takes precedence
+        /// over the `alpha` field of the enclosing `color` record.
+        hex(string),
+
+        /// sRGB.
+        rgb(srgb),
+
+        /// HSL.
+        hsl(hsl),
+
+        /// HWB.
+        hwb(hwb),
+
+        /// CIE L*a*b*.
+        lab(lab),
+
+        /// CIE LCH (cylindrical L*a*b*).
+        lch(lch),
+
+        /// Oklab.
+        oklab(oklab),
+
+        /// Oklch (cylindrical Oklab; also known as OKHCL).
+        oklch(oklch),
+
+        /// Okhsl (HSL-like perceptual encoding of Oklab).
+        okhsl(okhsl),
+    }
+
+    /// Identifies a color space as a conversion target, without carrying a
+    /// value.
+    enum color-space-tag {
+        hex,
+        rgb,
+        hsl,
+        hwb,
+        lab,
+        lch,
+        oklab,
+        oklch,
+        okhsl,
+    }
+
+    /// Errors that may occur during a color conversion.
+    variant color-error {
+        /// A hex string could not be parsed; carries the invalid input.
+        invalid-hex(string),
+
+        /// A color component is outside its valid range; carries a
+        /// human-readable description of which component and what range is
+        /// expected.
+        out-of-range(string),
+    }
+}
+
+/// Color conversion interface.
+///
+/// A single `convert` function replaces the combinatorial explosion of M×N
+/// pairwise conversion helpers. Wrap any color value in the `color` variant
+/// and specify the desired output space.
+interface conversion {
+    use types.{color, color-space-tag, color-error};
+
+    /// Convert a color to the specified color space.
+    ///
+    /// The input may be in any supported space; the result is always in the
+    /// space identified by `to`. Round-tripping through an intermediate space
+    /// (e.g. sRGB) is permitted when a direct path does not exist.
+    convert: func(input: color, to: color-space-tag) -> result<color, color-error>;
+}
+
+/// Implemented by any component that provides color conversion.
+world color-converter {
+    export conversion;
+}
