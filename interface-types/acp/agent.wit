@@ -24,20 +24,20 @@ interface agent {
     /// MUST be the first method called on the agent.
     ///
     /// See: <https://agentclientprotocol.com/protocol/initialization>
-    initialize: func(req: initialize-request) -> result<initialize-response, error>;
+    initialize: async func(req: initialize-request) -> result<initialize-response, error>;
 
     /// Authenticate using one of the methods advertised in
     /// `initialize-response.auth-methods`. Only required if the agent
     /// reports any auth methods. Maps to the JSON-RPC `authenticate` method.
     ///
     /// See: <https://agentclientprotocol.com/protocol/initialization#authentication>
-    authenticate: func(req: authenticate-request) -> result<_, error>;
+    authenticate: async func(req: authenticate-request) -> result<_, error>;
 
     /// Create a fresh conversation session. Must be called after
     /// `initialize`. Maps to the JSON-RPC `session/new` method.
     ///
     /// See: <https://agentclientprotocol.com/protocol/session-setup#creating-a-session>
-    new-session: func(req: new-session-request) -> result<new-session-response, error>;
+    new-session: async func(req: new-session-request) -> result<new-session-response, error>;
 
     /// Resume a previous session. Only available when
     /// `agent-capabilities.load-session` is true. Maps to the JSON-RPC
@@ -47,7 +47,7 @@ interface agent {
     /// the client interface before this call returns.
     ///
     /// See: <https://agentclientprotocol.com/protocol/session-setup#loading-sessions>
-    load-session: func(req: load-session-request) -> result<load-session-response, error>;
+    load-session: async func(req: load-session-request) -> result<load-session-response, error>;
 
     /// Discover existing sessions known to the agent. Only available when
     /// `agent-capabilities.session-capabilities.list` is true. Maps to the
@@ -56,7 +56,7 @@ interface agent {
     /// Uses cursor-based pagination via the opaque `cursor` field.
     ///
     /// See: <https://agentclientprotocol.com/protocol/session-list>
-    list-sessions: func(req: list-sessions-request) -> result<list-sessions-response, error>;
+    list-sessions: async func(req: list-sessions-request) -> result<list-sessions-response, error>;
 
     /// Reconnect to an existing session without replaying conversation
     /// history. Only available when
@@ -67,21 +67,21 @@ interface agent {
     /// `update-session` before responding.
     ///
     /// See: <https://agentclientprotocol.com/protocol/session-setup#resuming-sessions>
-    resume-session: func(req: resume-session-request) -> result<resume-session-response, error>;
+    resume-session: async func(req: resume-session-request) -> result<resume-session-response, error>;
 
     /// Cancel any ongoing work for a session and free its resources. Only
     /// available when `agent-capabilities.session-capabilities.close` is
     /// true. Maps to the JSON-RPC `session/close` method.
     ///
     /// See: <https://agentclientprotocol.com/protocol/session-setup#closing-active-sessions>
-    close-session: func(session-id: session-id) -> result<_, error>;
+    close-session: async func(session-id: session-id) -> result<_, error>;
 
     /// Switch the active mode for a session. Maps to the JSON-RPC
     /// `session/set_mode` method. The `mode-id` MUST be one of the modes
     /// returned in `new-session-response.modes` or `load-session-response.modes`.
     ///
     /// See: <https://agentclientprotocol.com/protocol/session-modes>
-    set-session-mode: func(req: set-session-mode-request) -> result<_, error>;
+    set-session-mode: async func(req: set-session-mode-request) -> result<_, error>;
 
     /// Send a user prompt and run a prompt turn to completion. Maps to the
     /// JSON-RPC `session/prompt` method.
@@ -92,7 +92,7 @@ interface agent {
     ///     `write-text-file`, and the terminal methods.
     ///
     /// See: <https://agentclientprotocol.com/protocol/prompt-turn>
-    prompt: func(req: prompt-request) -> result<prompt-response, error>;
+    prompt: async func(req: prompt-request) -> result<prompt-response, error>;
 
     /// Cancel an ongoing prompt turn. Modelled in JSON-RPC as the
     /// `session/cancel` notification (no response). The agent MUST
@@ -100,5 +100,5 @@ interface agent {
     /// `prompt` call.
     ///
     /// See: <https://agentclientprotocol.com/protocol/prompt-turn#cancellation>
-    cancel: func(session-id: session-id);
+    cancel: async func(session-id: session-id);
 }
