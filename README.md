@@ -9,6 +9,7 @@
 
 | Name        | Description                                          |
 | ----------- | ---------------------------------------------------- |
+| `archive`   | Extract and create ZIP, tar, and gzip archives        |
 | `wordmark`  | Convert between Markdown and Word (`.docx`) documents |
 | `tablemark` | Convert between Markdown tables and `.xlsx` workbooks |
 

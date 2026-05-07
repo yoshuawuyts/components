@@ -1,0 +1,32 @@
+package yoshuawuyts:archive;
+
+world archive {
+    /// A single file entry inside an archive.
+    record file-entry {
+        /// Relative path of the file inside the archive.
+        name: string,
+        /// Raw file content.
+        data: list<u8>,
+        /// Unix permission bits (e.g. `0o644`), if known.
+        permissions: option<u32>,
+    }
+
+    /// Auto-detect the archive format from `input` and extract all file entries.
+    ///
+    /// Supported formats: ZIP, tar, tar.gz, and bare gzip.
+    /// Returns a list of `file-entry` values, one per file contained in the archive.
+    export extract: func(input: list<u8>) -> result<list<file-entry>, string>;
+
+    /// Build a ZIP archive from the given file entries and return the raw bytes.
+    ///
+    /// `files` is a list of `file-entry` values.  Unix permission bits are
+    /// preserved when provided.
+    export create-zip: func(files: list<file-entry>) -> result<list<u8>, string>;
+
+    /// Build a gzip-compressed tar archive from the given file entries and
+    /// return the raw bytes.
+    ///
+    /// `files` is a list of `file-entry` values.  Unix permission bits are
+    /// preserved; entries without permissions default to `0o644`.
+    export create-tar-gz: func(files: list<file-entry>) -> result<list<u8>, string>;
+}

@@ -1,0 +1,30 @@
+[package]
+name = "archive"
+license = "Apache-2.0"
+repository = "https://github.com/yoshuawuyts/components"
+documentation = "https://docs.rs/archive"
+description = "Wasm Components"
+readme = "README.md"
+edition = "2021"
+keywords = []
+categories = []
+authors = ["Yoshua Wuyts <rust@yosh.is>"]
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+
+[dependencies]
+wit-bindgen = "0.36"
+# zip 2.3+ fixes path-canonicalization CVE; avoid 7.x which pulls in
+# typed-path 0.12 (requires nightly `#![feature(wasip2)]`).
+zip = { version = ">=2.3, <7", default-features = false, features = ["deflate"] }
+tar = "0.4"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
+[dev-dependencies]
+
+[lints]
+workspace = true
