@@ -4,6 +4,10 @@ package yosh:acp;
 ///
 /// See: <https://agentclientprotocol.com/protocol/prompt-turn>
 ///      <https://agentclientprotocol.com/protocol/slash-commands>
+/// Prompt turns, streaming session updates, and slash commands.
+///
+/// See: <https://agentclientprotocol.com/protocol/prompt-turn>
+///      <https://agentclientprotocol.com/protocol/slash-commands>
 interface prompts {
     use sessions.{session-id, session-mode-id, session-info-update};
     use content.{content-block};

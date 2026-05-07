@@ -1,6 +1,10 @@
 package yosh:acp;
 
-/// Methods exported by the client. The agent calls these.
+/// Host-capability callbacks invoked by the agent on the client side:
+/// streaming session updates, permission prompts, file system access, and
+/// terminal control.
+///
+/// All methods are called by the agent and implemented by the client.
 ///
 /// Maps to the JSON-RPC methods listed under "Client" in the protocol
 /// overview: <https://agentclientprotocol.com/protocol/overview#client>
