@@ -11,6 +11,7 @@
 | ----------- | ---------------------------------------------------- |
 | `wordmark`  | Convert between Markdown and Word (`.docx`) documents |
 | `tablemark` | Convert between Markdown tables and `.xlsx` workbooks |
+| `csvmark`   | Convert between CSV documents and Markdown tables    |
 
 ## Interfaces
 
