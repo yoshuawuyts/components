@@ -11,6 +11,7 @@
 | ----------- | ---------------------------------------------------- |
 | `wordmark`  | Convert between Markdown and Word (`.docx`) documents |
 | `tablemark` | Convert between Markdown tables and `.xlsx` workbooks |
+| `feedmark`  | Parse RSS, Atom and JSON feeds into normalized entries or a Markdown digest |
 
 ## Interfaces
 

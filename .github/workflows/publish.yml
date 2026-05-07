@@ -10,6 +10,7 @@ on:
         options:
           - wordmark
           - tablemark
+          - feedmark
           - docs
           - acp
       version:
@@ -22,7 +23,7 @@ env:
 
 jobs:
   publish-component:
-    if: ${{ inputs.target == 'wordmark' || inputs.target == 'tablemark' }}
+    if: ${{ inputs.target == 'wordmark' || inputs.target == 'tablemark' || inputs.target == 'feedmark' }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -45,6 +46,7 @@ jobs:
           case "${COMPONENT_NAME}" in
             wordmark)  desc="Convert between Markdown and Word documents" ;;
             tablemark) desc="Convert between Markdown tables and XLSX workbooks" ;;
+            feedmark)  desc="Parse RSS, Atom and JSON feeds into normalized entries or a Markdown digest" ;;
             *) echo "Unknown component: ${COMPONENT_NAME}" >&2; exit 1 ;;
           esac
           echo "COMPONENT_DESCRIPTION=${desc}" >> "$GITHUB_ENV"

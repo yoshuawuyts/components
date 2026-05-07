@@ -1,0 +1,26 @@
+[package]
+name = "feedmark"
+license = "Apache-2.0"
+repository = "https://github.com/yoshuawuyts/components"
+documentation = "https://docs.rs/feedmark"
+description = "Wasm Components"
+readme = "README.md"
+edition = "2018"
+keywords = []
+categories = []
+authors = ["Yoshua Wuyts <rust@yosh.is>"]
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+
+[dependencies]
+wit-bindgen = "0.36"
+feed-rs = { version = "2.3", default-features = false }
+
+[dev-dependencies]
+
+[lints]
+workspace = true
