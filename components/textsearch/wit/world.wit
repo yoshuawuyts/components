@@ -1,0 +1,50 @@
+package yosh:textsearch;
+
+world textsearch {
+    /// A single match found in the haystack.
+    record match {
+        /// 1-based line number of the line containing the match.
+        line-number: u64,
+        /// The text of the line containing the match, with any trailing
+        /// line terminator removed.
+        line: string,
+        /// Byte offset of the match start within the line.
+        column-start: u32,
+        /// Byte offset of the match end (exclusive) within the line.
+        column-end: u32,
+        /// The substring of the line that matched the pattern.
+        text: string,
+    }
+
+    /// Options controlling how the pattern is interpreted.
+    record options {
+        /// Match the pattern case-insensitively.
+        case-insensitive: bool,
+        /// Treat the pattern as a fixed literal string instead of a regex.
+        fixed-strings: bool,
+        /// Only match the pattern when it is bounded by word boundaries.
+        word: bool,
+        /// Allow the regex `.` to match newline characters and enable
+        /// matches spanning multiple lines.
+        multiline: bool,
+    }
+
+    /// Search `haystack` for all matches of the regex `pattern`, in the
+    /// same style as `ripgrep`. Returns one record per match.
+    export search: func(
+        pattern: string,
+        haystack: string,
+        options: options,
+    ) -> result<list<match>, string>;
+
+    /// Replace every match of the regex `pattern` in `haystack` with
+    /// `replacement`. The replacement string may reference capture groups
+    /// with `$1`, `${name}`, and so on, matching the syntax accepted by
+    /// `ripgrep --replace`.
+    export replace: func(
+        pattern: string,
+        replacement: string,
+        haystack: string,
+        options: options,
+    ) -> result<string, string>;
+}
