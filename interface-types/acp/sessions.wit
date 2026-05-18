@@ -84,15 +84,13 @@ interface sessions {
     // ------------------------------------------------------------------
 
     /// Identifies the component (provider or layer) that contributed a
-    /// session mode or model. Optional for backwards compatibility:
-    /// downstream stages MAY leave it unset and rely on the host to fill
-    /// it in with the stage's component id when forwarding upstream.
+    /// session mode or model.
     ///
-    /// Layers that synthesize new modes/models (which the downstream
-    /// stage doesn't know about) SHOULD set this explicitly, otherwise
-    /// the host's auto-fill would miscredit them to the wrapped stage.
-    /// Layers forwarding downstream entries MUST NOT overwrite an
-    /// existing value.
+    /// Providers set this to their own component id. Layers that
+    /// synthesize new modes/models (which the downstream stage doesn't
+    /// know about) set this to their own component id; layers
+    /// forwarding downstream entries MUST pass the existing value
+    /// through unchanged.
     record component-source {
         /// Stable component identifier. Format is host-defined but
         /// conventionally `namespace:name` (e.g. `local:plan-layer`,
@@ -117,10 +115,11 @@ interface sessions {
         name: string,
         /// Optional longer description.
         description: option<string>,
-        /// Which component contributed this mode. Hosts SHOULD fill this
-        /// in with the contributing stage's component id when forwarding
-        /// to the editor if the stage left it `none`.
-        provided-by: option<component-source>,
+        /// Which component contributed this mode. Layers that synthesize
+        /// new modes set this to their own component id; layers
+        /// forwarding downstream entries pass it through unchanged.
+        /// Providers set it to their own component id.
+        provided-by: component-source,
     }
 
     /// The set of modes available for a session and which one is active.
