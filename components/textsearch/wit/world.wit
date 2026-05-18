@@ -1,25 +1,56 @@
 package yosh:textsearch;
 
 world textsearch {
-    /// A single match found in the haystack.
-    record match {
-        /// 1-based line number of the line containing the match.
+    /// A single line of context surrounding a match (the equivalent of the
+    /// lines printed by `ripgrep` for `-B` / `-A` / `-C`).
+    record context-line {
+        /// 1-based line number of the context line within `contents`.
         line-number: u64,
-        /// The text of the line containing the match, with any trailing
-        /// line terminator removed.
+        /// The text of the context line, with any trailing line terminator
+        /// removed.
         line: string,
-        /// Byte offset of the match start within the line.
-        column-start: u32,
-        /// Byte offset of the match end (exclusive) within the line.
-        column-end: u32,
-        /// The substring of the line that matched the pattern.
-        text: string,
     }
 
-    /// Options controlling how the pattern is interpreted.
+    /// A single match found in the haystack.
+    record match {
+        /// 1-based line number of the first line of the match.
+        line-number: u64,
+        /// 1-based line number of the last line of the match. Equal to
+        /// `line-number` for matches that do not span multiple lines.
+        line-end: u64,
+        /// The text covered by the match's line(s), with any trailing
+        /// line terminator removed. For multi-line matches this string may
+        /// contain embedded newlines.
+        line: string,
+        /// Byte offset of the match start within `line`.
+        column-start: u32,
+        /// Byte offset of the match end (exclusive) within `line`.
+        column-end: u32,
+        /// Absolute byte offset of the match start within `contents`.
+        byte-start: u64,
+        /// Absolute byte offset of the match end (exclusive) within
+        /// `contents`. Together with `byte-start` this is enough to apply
+        /// the match as an edit to a buffer without re-scanning.
+        byte-end: u64,
+        /// The substring of `contents` that matched the pattern.
+        text: string,
+        /// Lines of context immediately before the match, in document
+        /// order, as requested by `options.before-context`.
+        before-context: list<context-line>,
+        /// Lines of context immediately after the match, in document
+        /// order, as requested by `options.after-context`.
+        after-context: list<context-line>,
+    }
+
+    /// Options controlling how the pattern is interpreted and how the
+    /// search is performed.
     record options {
         /// Match the pattern case-insensitively.
         case-insensitive: bool,
+        /// Treat the pattern as case-insensitive only when the pattern
+        /// contains no uppercase characters (`ripgrep`'s `--smart-case`).
+        /// Ignored if `case-insensitive` is also set.
+        smart-case: bool,
         /// Treat the pattern as a fixed literal string instead of a regex.
         fixed-strings: bool,
         /// Only match the pattern when it is bounded by word boundaries.
@@ -27,14 +58,25 @@ world textsearch {
         /// Allow the regex `.` to match newline characters and enable
         /// matches spanning multiple lines.
         multiline: bool,
+        /// Number of lines of context to include before each match. The
+        /// equivalent of `ripgrep`'s `-B`.
+        before-context: u32,
+        /// Number of lines of context to include after each match. The
+        /// equivalent of `ripgrep`'s `-A`.
+        after-context: u32,
+        /// Stop searching each file after this many matches. `0` means no
+        /// limit. The equivalent of `ripgrep`'s `--max-count`.
+        max-count: u32,
     }
 
     /// A single file supplied to a multi-file operation.
     ///
     /// The component does not access the host filesystem; callers are
-    /// expected to enumerate files and read their contents themselves.
-    /// `path` is treated as an opaque label that is echoed back in the
-    /// results so callers can correlate matches with their source.
+    /// expected to enumerate files (applying any glob / file-type filters
+    /// themselves) and read their contents. `path` is treated as an
+    /// opaque label that is echoed back in the results so callers can
+    /// correlate matches with their source. `contents` must be valid
+    /// UTF-8 — callers are responsible for transcoding any other encoding.
     record file {
         /// Caller-supplied identifier for this file (typically a path).
         path: string,
@@ -50,12 +92,18 @@ world textsearch {
         matches: list<match>,
     }
 
-    /// The rewritten contents of a single input file.
+    /// The rewritten contents of a single input file, along with the
+    /// matches that were replaced so callers can render a preview / diff
+    /// without having to call `search-files` separately.
     record file-replacement {
         /// The `path` of the input file.
         path: string,
         /// The file's contents after applying the replacement.
         contents: string,
+        /// Every match that was replaced, against the *original*
+        /// contents, in document order. `byte-start` / `byte-end` index
+        /// into the pre-replacement contents.
+        matches: list<match>,
     }
 
     /// Search `haystack` for all matches of the regex `pattern`, in the
@@ -80,8 +128,10 @@ world textsearch {
     /// Search each file in `files` for all matches of the regex `pattern`.
     ///
     /// Returns one `file-matches` record per input file, in the same order
-    /// as `files`. Files with no matches are omitted from the result, so
-    /// callers can iterate the result directly without filtering.
+    /// as `files`. Files with no matches are omitted from the result; the
+    /// symmetric `replace-files` omits files whose contents are unchanged.
+    /// Glob / file-type filtering is the caller's responsibility — only
+    /// the files actually supplied here are searched.
     export search-files: func(
         pattern: string,
         files: list<file>,
@@ -91,10 +141,12 @@ world textsearch {
     /// Replace every match of the regex `pattern` in each file's contents
     /// with `replacement`.
     ///
-    /// Returns one `file-replacement` record per input file, in the same
-    /// order as `files`. Files whose contents are unchanged are omitted
-    /// from the result, mirroring the behaviour of `rg --replace` over a
-    /// directory.
+    /// Returns one `file-replacement` record per input file with the
+    /// rewritten contents and the matches that were replaced (so callers
+    /// can show a preview / diff). Files whose contents are unchanged are
+    /// omitted from the result; the symmetric `search-files` omits files
+    /// with no matches. Glob / file-type filtering is the caller's
+    /// responsibility.
     export replace-files: func(
         pattern: string,
         replacement: string,
