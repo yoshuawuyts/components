@@ -29,6 +29,35 @@ world textsearch {
         multiline: bool,
     }
 
+    /// A single file supplied to a multi-file operation.
+    ///
+    /// The component does not access the host filesystem; callers are
+    /// expected to enumerate files and read their contents themselves.
+    /// `path` is treated as an opaque label that is echoed back in the
+    /// results so callers can correlate matches with their source.
+    record file {
+        /// Caller-supplied identifier for this file (typically a path).
+        path: string,
+        /// The contents of the file to be searched.
+        contents: string,
+    }
+
+    /// All matches found within a single input file.
+    record file-matches {
+        /// The `path` of the input file these matches came from.
+        path: string,
+        /// Every match in the file, in document order.
+        matches: list<match>,
+    }
+
+    /// The rewritten contents of a single input file.
+    record file-replacement {
+        /// The `path` of the input file.
+        path: string,
+        /// The file's contents after applying the replacement.
+        contents: string,
+    }
+
     /// Search `haystack` for all matches of the regex `pattern`, in the
     /// same style as `ripgrep`. Returns one record per match.
     export search: func(
@@ -47,4 +76,29 @@ world textsearch {
         haystack: string,
         options: options,
     ) -> result<string, string>;
+
+    /// Search each file in `files` for all matches of the regex `pattern`.
+    ///
+    /// Returns one `file-matches` record per input file, in the same order
+    /// as `files`. Files with no matches are omitted from the result, so
+    /// callers can iterate the result directly without filtering.
+    export search-files: func(
+        pattern: string,
+        files: list<file>,
+        options: options,
+    ) -> result<list<file-matches>, string>;
+
+    /// Replace every match of the regex `pattern` in each file's contents
+    /// with `replacement`.
+    ///
+    /// Returns one `file-replacement` record per input file, in the same
+    /// order as `files`. Files whose contents are unchanged are omitted
+    /// from the result, mirroring the behaviour of `rg --replace` over a
+    /// directory.
+    export replace-files: func(
+        pattern: string,
+        replacement: string,
+        files: list<file>,
+        options: options,
+    ) -> result<list<file-replacement>, string>;
 }

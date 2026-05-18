@@ -31,6 +31,47 @@ impl Guest for Component {
         let re = build_regex(&pattern, &options)?;
         Ok(re.replace_all(&haystack, replacement.as_str()).into_owned())
     }
+
+    fn search_files(
+        pattern: String,
+        files: Vec<File>,
+        options: Options,
+    ) -> Result<Vec<FileMatches>, String> {
+        let searcher = Searcher::new(&pattern, &options)?;
+        let mut out = Vec::new();
+        for file in files {
+            let matches = searcher.run(&file.contents)?;
+            if !matches.is_empty() {
+                out.push(FileMatches {
+                    path: file.path,
+                    matches,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    fn replace_files(
+        pattern: String,
+        replacement: String,
+        files: Vec<File>,
+        options: Options,
+    ) -> Result<Vec<FileReplacement>, String> {
+        let re = build_regex(&pattern, &options)?;
+        let mut out = Vec::new();
+        for file in files {
+            let replaced = re.replace_all(&file.contents, replacement.as_str());
+            // Only emit files whose contents actually changed, so callers
+            // can iterate the result without diffing.
+            if let std::borrow::Cow::Owned(contents) = replaced {
+                out.push(FileReplacement {
+                    path: file.path,
+                    contents,
+                });
+            }
+        }
+        Ok(out)
+    }
 }
 
 use grep_matcher::Matcher;
@@ -56,7 +97,7 @@ impl Searcher {
     }
 
     /// Execute the search against the given haystack and collect all matches.
-    fn run(self, haystack: &str) -> Result<Vec<Match>, String> {
+    fn run(&self, haystack: &str) -> Result<Vec<Match>, String> {
         let mut collector = Collector {
             matcher: &self.matcher,
             results: Vec::new(),
