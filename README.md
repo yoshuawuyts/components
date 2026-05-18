@@ -9,8 +9,9 @@
 
 | Name        | Description                                          |
 | ----------- | ---------------------------------------------------- |
-| `wordmark`  | Convert between Markdown and Word (`.docx`) documents |
-| `tablemark` | Convert between Markdown tables and `.xlsx` workbooks |
+| `wordmark`   | Convert between Markdown and Word (`.docx`) documents |
+| `tablemark`  | Convert between Markdown tables and `.xlsx` workbooks |
+| `textsearch` | Regex find/replace over text, powered by `ripgrep`'s engine |
 
 ## Interfaces
 
