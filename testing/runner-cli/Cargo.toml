@@ -1,0 +1,9 @@
+[package]
+name = "wasi-test-runner-cli"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+futures-lite = { version = "2.6.1", default-features = false, features = ["std"] }
+wit-bindgen = "0.46.0"

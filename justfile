@@ -26,6 +26,36 @@ publish target version:
     @sleep 3
     gh run watch --exit-status $(gh run list --workflow=publish.yml --limit 1 --json databaseId --jq '.[0].databaseId')
 
+# --- Wasm-component test harness (see testing/README.md) -------------------
+#
+# Tests are themselves Wasm components that export `wasi:test/tests`. Each is
+# composed with its component-under-test plus a generic runner (via WAC) into a
+# single component, then executed with `wasmtime`. The harness lives in the
+# separate `testing/` workspace (excluded from the root workspace).
+
+# Build the reusable test harness (generic runner + every suite) for
+# wasm32-wasip2. Built in release so the async helper crate uses `opt-level=s`.
+build-test-infra:
+    cd testing && cargo build --release --target wasm32-wasip2
+
+# Build, compose, and run the test suite for a single component.
+# `name` must be one of: textsearch, wordmark, tablemark.
+# Always (re)builds the component-under-test and the harness first so the
+# composed artifact never goes stale.
+test-component name: build-test-infra
+    cargo build -p {{name}} --release --target wasm32-wasip2
+    mkdir -p target/test
+    wac compose \
+        --dep yosh:{{name}}=target/wasm32-wasip2/release/{{name}}.wasm \
+        --dep yosh:{{name}}-tests=testing/target/wasm32-wasip2/release/{{name}}_tests.wasm \
+        --dep yosh:test-runner=testing/target/wasm32-wasip2/release/wasi-test-runner-cli.wasm \
+        testing/compositions/{{name}}.wac \
+        -o target/test/{{name}}-test.wasm
+    wasmtime run -Wcomponent-model-async target/test/{{name}}-test.wasm
+
+# Build, compose, and run every component's test suite.
+test-components: (test-component "textsearch") (test-component "wordmark") (test-component "tablemark")
+
 # Show the latest semver tag published to GHCR for each package.
 # Skips non-semver tags (e.g. `latest`). Prints `<package>: <version>` per line,
 # or `<package>: -` if no semver tag has been published yet.

@@ -1,5 +1,8 @@
 [workspace]
 members = ["components/*"]
+# `testing/` is a separate workspace (wit-bindgen 0.46 + async, wasm-only). It
+# must not be part of the native `cargo check --all` / `cargo test --all` runs.
+exclude = ["testing"]
 resolver = "2"
 
 [workspace.lints.rust]

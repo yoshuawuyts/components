@@ -1,0 +1,91 @@
+// Import side of the textsearch test suite.
+//
+// These are the textsearch component's world-level exports, duplicated here as
+// *imports* so the suite can call them. This is the deliberate, temporary
+// duplication noted in the testing strategy: textsearch exports bare world
+// functions with inline record types (not a named interface), so there is no
+// shared interface package to depend on. At composition time, `wac compose`
+// wires the component's exports directly into these imports (e.g.
+// `search: cut.search`), and the component-model type identity flows from the
+// component's export into this import — so these signatures must mirror
+// textsearch's exactly. Keep this file in sync with
+// `components/textsearch/wit/world.wit`.
+//
+// NOTE: this works because every type here is a plain value type (record /
+// list / result / string). Structural matching does NOT extend to `resource`
+// / handle / borrow types — if textsearch ever exports those, it must move to
+// a shared named interface instead.
+package yosh:textsearch-imports;
+
+world imports {
+    record context-line {
+        line-number: u64,
+        line: string,
+    }
+
+    record match {
+        line-number: u64,
+        line-end: u64,
+        line: string,
+        column-start: u32,
+        column-end: u32,
+        byte-start: u64,
+        byte-end: u64,
+        text: string,
+        before-context: list<context-line>,
+        after-context: list<context-line>,
+    }
+
+    record options {
+        case-insensitive: bool,
+        smart-case: bool,
+        fixed-strings: bool,
+        word: bool,
+        multiline: bool,
+        before-context: u32,
+        after-context: u32,
+        max-count: u32,
+    }
+
+    record file {
+        path: string,
+        contents: string,
+    }
+
+    record file-matches {
+        path: string,
+        matches: list<match>,
+    }
+
+    record file-replacement {
+        path: string,
+        contents: string,
+        matches: list<match>,
+    }
+
+    import search: func(
+        pattern: string,
+        haystack: string,
+        options: options,
+    ) -> result<list<match>, string>;
+
+    import replace: func(
+        pattern: string,
+        replacement: string,
+        haystack: string,
+        options: options,
+    ) -> result<string, string>;
+
+    import search-files: func(
+        pattern: string,
+        files: list<file>,
+        options: options,
+    ) -> result<list<file-matches>, string>;
+
+    import replace-files: func(
+        pattern: string,
+        replacement: string,
+        files: list<file>,
+        options: options,
+    ) -> result<list<file-replacement>, string>;
+}

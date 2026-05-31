@@ -1,0 +1,63 @@
+// Vendored verbatim from Lann Martin's `wasi:test` prototype:
+//   https://github.com/lann/wasi-test (wit/wasi-test.wit)
+//
+// `wasi:test` is an unpublished prototype with no OCI release, so we vendor it
+// here and treat it as the harness ABI. The runner and *every* test suite must
+// share this exact same copy so the `wasi:test/tests` interface identity
+// matches at composition time.
+//
+// `stream<string>` is a native component-model async type, so this package is
+// fully self-contained and has no external WIT dependencies.
+package wasi:test;
+
+interface tests {
+    // Test options constructed by a test runner.
+    resource test-options {
+        constructor();
+
+        // Enables logging, returning a stream of log messages.
+        //
+        // This stream should be consumed concurrently with `test-case.run`.
+        enable-logging: func() -> stream<string>;
+    }
+
+    // Test context passed to test.
+    resource test-context {
+        // Creates a test-context from the given test-options.
+        constructor(opts: test-options);
+        // Returns true if logging is enabled.
+        logging-enabled: func() -> bool;
+        // Logs the given message.
+        log: func(msg: string);
+    }
+
+    // Test result.
+    variant test-result {
+        // The test passed.
+        pass,
+        // The test failed; the payload should contain a short (one line)
+        // explanation of the failure.
+        fail(string),
+    }
+
+    // A single test case.
+    resource test-case {
+        // Returns a kebab-case name for the test.
+        name: func() -> string;
+        // Runs the test.
+        run: func(ctx: borrow<test-context>) -> test-result;
+    }
+
+    // Returns all tests.
+    all: func() -> list<test-case>;
+}
+
+// A suite contains tests.
+world suite {
+    export tests;
+}
+
+// A runner runs tests, typically reporting results.
+world runner {
+    import tests;
+}

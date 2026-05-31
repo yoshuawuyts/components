@@ -1,0 +1,23 @@
+// Import side of the wordmark test suite.
+//
+// These are the wordmark component's world-level exports, duplicated here as
+// *imports* so the suite can call them. This is the deliberate, temporary
+// duplication noted in the testing strategy: wordmark exports bare world
+// functions (not a named interface), so there is no shared interface package to
+// depend on. At composition time, `wac compose` wires the component's exports
+// directly into these imports (e.g. `to-word: cut["to-word"]`), and the
+// component-model type identity flows from the component's export into this
+// import - so these signatures must mirror wordmark's exactly. Keep this file in
+// sync with `components/wordmark/wit/world.wit`.
+//
+// NOTE: every type here is a plain value type (string / list<u8> / result).
+// Structural matching does NOT extend to `resource` / handle / borrow types.
+package yosh:wordmark-imports;
+
+world imports {
+    /// Convert a markdown document to a Word (.docx) document.
+    import to-word: func(markdown: string) -> result<list<u8>, string>;
+
+    /// Convert a Word (.docx) document to a markdown document.
+    import to-markdown: func(docx: list<u8>) -> result<string, string>;
+}

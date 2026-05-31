@@ -56,3 +56,40 @@ jobs:
 
     - name: Docs
       run: cargo doc
+
+  wasm_component_tests:
+    name: Wasm component tests
+    runs-on: ubuntu-latest
+    # The test harness uses wit-bindgen 0.46 + the async component-model stream
+    # ABI and only builds for wasm32-wasip2; it lives in the separate `testing/`
+    # workspace. Keep it a distinct job so a hiccup in this bleeding-edge async
+    # path doesn't block the stable native build above. `-Dwarnings` is not
+    # applied here because the generated async bindings are outside our control.
+    env:
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      # The harness pins nightly + wasm32-wasip2 via testing/rust-toolchain.toml;
+      # rustup installs it on first use. Add the wasm target for the default
+      # toolchain too, used when building the components under test.
+      - name: Install Rust toolchains
+        run: |
+          rustup target add wasm32-wasip2
+          rustup toolchain install nightly --target wasm32-wasip2 --profile minimal
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@v1.10.15
+
+      - name: Install wac, wasmtime, and just
+        run: |
+          cargo binstall --no-confirm wac-cli@0.10.0
+          cargo binstall --no-confirm wasmtime-cli@37.0.2
+          cargo binstall --no-confirm just
+
+      # Builds each component, builds the harness, composes cut + suite + runner
+      # via WAC, and runs the composed component with wasmtime. A drift between a
+      # suite's duplicated import signatures and its component's exports makes
+      # `wac compose` fail loudly here, so this doubles as the WIT-drift check.
+      - name: Build, compose, and run component test suites
+        run: just test-components

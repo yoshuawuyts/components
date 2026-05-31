@@ -1,0 +1,12 @@
+[package]
+name = "wordmark-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasi-test = { path = "../../wasi-test" }
+wit-bindgen = "0.46.0"
