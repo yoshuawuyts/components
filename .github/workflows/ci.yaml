@@ -60,6 +60,8 @@ jobs:
   component_tests:
     name: Wasm component tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       WASMTIME_VERSION: v29.0.1
       WAC_VERSION: v0.10.0
