@@ -56,3 +56,42 @@ jobs:
 
     - name: Docs
       run: cargo doc
+
+  component_tests:
+    name: Wasm component tests
+    runs-on: ubuntu-latest
+    env:
+      WASMTIME_VERSION: v29.0.1
+      WAC_VERSION: v0.10.0
+      JUST_VERSION: 1.36.0
+    steps:
+    - uses: actions/checkout@master
+
+    - name: Install stable Rust with wasm32-wasip2
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        target: wasm32-wasip2
+        override: true
+
+    - name: Install wasmtime, wac and just
+      run: |
+        set -euo pipefail
+        mkdir -p "$HOME/.local/bin"
+        # wasmtime
+        curl -fsSL "https://github.com/bytecodealliance/wasmtime/releases/download/${WASMTIME_VERSION}/wasmtime-${WASMTIME_VERSION}-x86_64-linux.tar.xz" \
+          | tar -xJ -C /tmp
+        mv "/tmp/wasmtime-${WASMTIME_VERSION}-x86_64-linux/wasmtime" "$HOME/.local/bin/wasmtime"
+        # wac
+        curl -fsSL "https://github.com/bytecodealliance/wac/releases/download/${WAC_VERSION}/wac-cli-x86_64-unknown-linux-musl" \
+          -o "$HOME/.local/bin/wac"
+        chmod +x "$HOME/.local/bin/wac"
+        # just
+        curl -fsSL "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+          | tar -xz -C /tmp just
+        mv /tmp/just "$HOME/.local/bin/just"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    - name: Run component test suites
+      run: just test
+

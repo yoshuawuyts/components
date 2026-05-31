@@ -1,0 +1,43 @@
+// A minimal, resource-free test harness contract for Wasm components.
+//
+// Inspired by Lann Martin's `wasi:test` prototype
+// (https://github.com/lann/wasi-test), in which tests are themselves Wasm
+// components that are composed with a generic runner and executed under a
+// host such as `wasmtime`.
+//
+// This version is deliberately simplified to avoid `resource` and `stream`
+// types so that both suites and runners build on stable Rust for the
+// `wasm32-wasip2` target without the component-model-async feature. Richer
+// features from the upstream prototype (per-test `resource`s, lazy log
+// streaming, host-controlled options) are intentionally left as future work.
+package wasi:test;
+
+/// The contract between a test *suite* and a test *runner*.
+interface tests {
+    /// The outcome of running a single test case.
+    record test-outcome {
+        /// Kebab-case name identifying the test.
+        name: string,
+        /// `ok` if the test passed; `err(message)` with a short, one-line
+        /// explanation if it failed.
+        outcome: result<_, string>,
+    }
+
+    /// Run every test in the suite and return one outcome per test, in
+    /// declaration order.
+    run-all: func() -> list<test-outcome>;
+}
+
+/// A suite exports its tests so that a runner can execute them. A concrete
+/// suite world additionally *imports* the surface of the component under
+/// test (see `testing/textsearch-tests` for an example) and `include`s this
+/// world to pick up the `wasi:test/tests` export.
+world suite {
+    export tests;
+}
+
+/// A runner imports a suite's tests and reports the results. Composed with a
+/// suite via `wac plug`, the result is an executable component.
+world runner {
+    import tests;
+}

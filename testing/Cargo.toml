@@ -1,0 +1,13 @@
+# Standalone workspace for the Wasm component test harness.
+#
+# These crates compile to Wasm components (`wasm32-wasip2`) and use
+# `wit-bindgen`, so they are intentionally kept out of the root workspace
+# (which is built and tested on the host). See `testing/README.md`.
+[workspace]
+resolver = "2"
+members = ["runner", "textsearch-tests"]
+
+[workspace.lints.rust]
+# The component test crates contain `wit-bindgen`-generated FFI glue that
+# emits the `unsafe` exports required by the Component Model ABI.
+unsafe_code = "allow"

@@ -16,6 +16,29 @@ build-wit:
     wkg wit build -d interface-types/docs -o target/wit/docs.wasm
     wkg wit build -d interface-types/acp -o target/wit/acp.wasm
 
+# Run the Wasm component test suites. Each suite is itself a Wasm component
+# (under `testing/`) that is composed with the real component-under-test and a
+# generic runner via `wac plug`, then executed with `wasmtime`.
+# Requires `wac` and `wasmtime` on PATH. See `testing/README.md`.
+test:
+    cargo build -p textsearch --target wasm32-wasip2 {{cargo-profile}}
+    cd testing && cargo build --target wasm32-wasip2 {{cargo-profile}}
+    mkdir -p target/test
+    just _run-suite textsearch textsearch_tests
+
+# (internal) Compose `<component>` with its `<suite>` and the generic runner,
+# then execute the resulting test component under `wasmtime`.
+_run-suite component suite:
+    wac plug \
+        --plug target/wasm32-wasip2/{{profile}}/{{component}}.wasm \
+        testing/target/wasm32-wasip2/{{profile}}/{{suite}}.wasm \
+        -o target/test/{{component}}-suite.wasm
+    wac plug \
+        --plug target/test/{{component}}-suite.wasm \
+        testing/target/wasm32-wasip2/{{profile}}/test-runner.wasm \
+        -o target/test/{{component}}-test-runner.wasm
+    wasmtime run target/test/{{component}}-test-runner.wasm
+
 # Trigger the `Publish Component` workflow on CI for a single target at the
 # given version, then watch the resulting run until it completes.
 # `target` must be one of: wordmark, tablemark, textsearch, docs, acp.

@@ -1,0 +1,11 @@
+[package]
+name = "test-runner"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+wit-bindgen = "0.36"
+
+[lints]
+workspace = true

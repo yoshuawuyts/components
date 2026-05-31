@@ -1,0 +1,88 @@
+package yosh:textsearch-tests;
+
+/// Test suite for the `textsearch` component.
+///
+/// The records and functions below mirror the exports of the `yosh:textsearch`
+/// world (see `components/textsearch/wit/world.wit`). They are declared as
+/// *imports* here so that, once this suite is composed with the real
+/// `textsearch.wasm` via `wac plug`, the test code calls the actual component.
+///
+/// NOTE: every exported function of the component under test must be imported
+/// here, even if a given test only exercises a few. `wac plug` rejects a
+/// composition whose socket imports only a subset of a freestanding world's
+/// exports ("type not valid to be used as import").
+world textsearch-tests {
+    record context-line {
+        line-number: u64,
+        line: string,
+    }
+
+    record match {
+        line-number: u64,
+        line-end: u64,
+        line: string,
+        column-start: u32,
+        column-end: u32,
+        byte-start: u64,
+        byte-end: u64,
+        text: string,
+        before-context: list<context-line>,
+        after-context: list<context-line>,
+    }
+
+    record options {
+        case-insensitive: bool,
+        smart-case: bool,
+        fixed-strings: bool,
+        word: bool,
+        multiline: bool,
+        before-context: u32,
+        after-context: u32,
+        max-count: u32,
+    }
+
+    record file {
+        path: string,
+        contents: string,
+    }
+
+    record file-matches {
+        path: string,
+        matches: list<match>,
+    }
+
+    record file-replacement {
+        path: string,
+        contents: string,
+        matches: list<match>,
+    }
+
+    import search: func(
+        pattern: string,
+        haystack: string,
+        options: options,
+    ) -> result<list<match>, string>;
+
+    import replace: func(
+        pattern: string,
+        replacement: string,
+        haystack: string,
+        options: options,
+    ) -> result<string, string>;
+
+    import search-files: func(
+        pattern: string,
+        files: list<file>,
+        options: options,
+    ) -> result<list<file-matches>, string>;
+
+    import replace-files: func(
+        pattern: string,
+        replacement: string,
+        files: list<file>,
+        options: options,
+    ) -> result<list<file-replacement>, string>;
+
+    // Pick up the `wasi:test/tests` export.
+    include wasi:test/suite;
+}

@@ -1,0 +1,9 @@
+package yosh:test-runner;
+
+/// A generic, suite-agnostic test runner. It imports `wasi:test/tests` from
+/// a composed suite and is itself a `wasm32-wasip2` command (the standard
+/// library provides the `wasi:cli/run` export), so the composed component
+/// can be executed directly with `wasmtime run`.
+world test-runner {
+    include wasi:test/runner;
+}

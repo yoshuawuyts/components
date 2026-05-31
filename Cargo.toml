@@ -1,5 +1,8 @@
 [workspace]
 members = ["components/*"]
+# The `testing/` directory is a standalone workspace of Wasm component test
+# harnesses (built for `wasm32-wasip2`); it is excluded from the host build.
+exclude = ["testing"]
 resolver = "2"
 
 [workspace.lints.rust]
