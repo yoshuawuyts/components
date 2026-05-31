@@ -121,13 +121,22 @@ same way and consume it via OCI instead of vendoring.
 
 ## Status
 
-- **Milestone 1 (async path) — verified.** The `smoke` suite composes with the
-  runner and runs on wasmtime 37: streaming logs work, a passing test is quiet,
-  a failing test prints its log and the process exits non-zero. This was the
-  highest-risk part (wit-bindgen 0.46 async streams + `-Wcomponent-model-async`)
-  and it works.
-- **textsearch / wordmark / tablemark suites + compositions — authored.** Build
-  and end-to-end run verification of these was blocked by host memory exhaustion
-  at the time of writing (compiles were being OOM-killed). Run
-  `just test-components` on a machine with adequate memory to verify, then
-  remove this note.
+All suites are verified end-to-end on wasmtime 37.0.2 (`just test-components`,
+exit 0):
+
+| component  | tests | result |
+|------------|-------|--------|
+| smoke      | 2     | pass+fail path (async streaming logs, non-zero exit) |
+| textsearch | 10    | all pass |
+| wordmark   | 4     | all pass |
+| tablemark  | 4     | all pass |
+
+The async path (wit-bindgen 0.46 streams + `-Wcomponent-model-async`) — the
+highest-risk piece — works: streaming logs are emitted, a passing test is quiet,
+a failing test prints its log and the process exits non-zero.
+
+Each composed component validates with `wasm-tools validate -f cm-async` and,
+post-composition, imports only standard WASI interfaces (wasmtime satisfies them
+at run time) — the component-under-test's bare functions are fully wired into the
+suite, confirming the WAC composition mechanism.
+

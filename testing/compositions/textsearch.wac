@@ -34,4 +34,4 @@ let runner = new yosh:test-runner {
     ...
 };
 
-export runner["wasi:cli/run"];
+export runner["wasi:cli/run@0.2.0"];
