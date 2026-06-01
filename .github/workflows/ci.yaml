@@ -56,3 +56,24 @@ jobs:
 
     - name: Docs
       run: cargo doc
+
+  wasm_component_tests:
+    name: Wasm component tests
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: ""
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust toolchains
+      run: |
+        rustup target add wasm32-wasip2
+        rustup toolchain install nightly --target wasm32-wasip2 --profile minimal
+    - name: Install cargo-binstall
+      uses: cargo-bins/cargo-binstall@v1.10.15
+    - name: Install wac, wasmtime, and just
+      run: |
+        cargo binstall --no-confirm wac-cli@0.10.0
+        cargo binstall --no-confirm wasmtime-cli@37.0.2
+        cargo binstall --no-confirm just
+    - name: Build, compose, and run component test suites
+      run: just test-components
