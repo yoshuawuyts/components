@@ -1,4 +1,7 @@
 [package]
+# Ported from Lann Martin's `wasi:test` prototype (https://github.com/lann/wasi-test).
+# Upstream currently has no license; this crate is intentionally unpublished and
+# carries no license claim. See testing/README.md "Provenance and licensing".
 name = "wasi-test"
 version = "0.1.0"
 edition = "2024"

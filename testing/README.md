@@ -107,17 +107,43 @@ check).
 
 ## On a published OCI `wasi:test` package
 
-The user asked whether Lann publishes an OCI package we could consume instead of
-vendoring. As of writing, `wasi:test` is an **unpublished prototype** with no
-OCI release, so we vendor `wit/wasi-test.wit` verbatim and treat it as the
-harness ABI (`stream<string>` is a native component-model type, so the file is
-fully self-contained with no external WIT deps). The runner and *every* suite
-must share this exact copy so the `wasi:test/tests` interface identity matches
-at compose time.
+As of writing, `wasi:test` is an **unpublished prototype** with no OCI release,
+so we vendor `wit/wasi-test.wit` verbatim and treat it as the harness ABI
+(`stream<string>` is a native component-model type, so the file is fully
+self-contained with no external WIT deps). The runner and *every* suite must
+share this exact copy so the `wasi:test/tests` interface identity matches at
+compose time.
 
 Optional follow-up: this repo already publishes WIT packages to GHCR (see
 `publish.yml` for `docs`/`acp`). We could publish our copy of `wasi:test` the
 same way and consume it via OCI instead of vendoring.
+
+## Provenance and licensing
+
+Three artifacts here are derived from Lann Martin's `wasi:test` prototype at
+<https://github.com/lann/wasi-test>; each carries a provenance note in its
+header:
+
+- `wit/wasi-test.wit` (vendored verbatim)
+- `wasi-test/` (ported helper crate)
+- `runner-cli/` (ported runner)
+
+**Licensing caveat:** the upstream repo currently ships **no license** (no
+`LICENSE` file, no `license` field in its `Cargo.toml`, no statement in its
+README). Absent an explicit license, the default is "all rights reserved," which
+means we do not yet have a clear grant to vendor, modify, or redistribute this
+code. The rest of this repository is Apache-2.0, but **that license does not
+extend to these derived files** — we cannot relicense someone else's code. The
+two ported crates are therefore marked `publish = false` and deliberately carry
+no Apache-2.0 claim.
+
+Action needed before this is relied on long-term or published: ask Lann to add
+an explicit OSI license to `wasi-test` (e.g. Apache-2.0 or MIT). Once upstream
+has a license, record it here, add the matching `license` field to the two
+ported crates, and include the upstream copyright in attribution as that license
+requires. If the project prefers not to depend on unlicensed code in the
+meantime, the alternative is a clean-room reimplementation of the helper +
+runner against only the (separately authored) `wasi:test/tests` interface shape.
 
 ## Status
 
