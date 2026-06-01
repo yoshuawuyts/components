@@ -1,7 +1,8 @@
 [package]
-# Ported from Lann Martin's `wasi:test` prototype (https://github.com/lann/wasi-test).
-# Upstream currently has no license; this crate is intentionally unpublished and
-# carries no license claim. See testing/README.md "Provenance and licensing".
+# Credit: ported from Lann Martin's `wasi:test` prototype
+# (https://github.com/lann/wasi-test); see the crate's main.rs header.
+# Unpublished and carries no license claim. See testing/README.md "Credits and
+# provenance".
 name = "wasi-test-runner-cli"
 version = "0.1.0"
 edition = "2024"

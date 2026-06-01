@@ -1,5 +1,6 @@
-// Vendored verbatim from Lann Martin's `wasi:test` prototype:
-//   https://github.com/lann/wasi-test (wit/wasi-test.wit)
+// Credit: vendored verbatim from Lann Martin's `wasi:test` prototype.
+//   Source: https://github.com/lann/wasi-test (wit/wasi-test.wit)
+//   Author: Lann Martin. Included here with thanks.
 //
 // `wasi:test` is an unpublished prototype with no OCI release, so we vendor it
 // here and treat it as the harness ABI. The runner and *every* test suite must

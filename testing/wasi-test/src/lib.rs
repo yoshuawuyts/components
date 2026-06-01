@@ -1,10 +1,11 @@
-//! Helper crate for writing `wasi:test` test suites.
+//! Credit: ported from Lann Martin's `wasi:test` prototype.
+//!   Source: <https://github.com/lann/wasi-test> (the `rust/` crate)
+//!   Author: Lann Martin. Reused here with thanks.
 //!
-//! Ported from Lann Martin's `wasi:test` prototype
-//! (<https://github.com/lann/wasi-test>, the `rust/` crate). A test suite
-//! crate writes plain functions taking `&TestContext` and returning anything
-//! that implements [`IntoTestResult`], then registers them with the
-//! [`suite!`] macro, which generates the `wasi:test/tests` export.
+//! Helper crate for writing `wasi:test` test suites. A test suite crate writes
+//! plain functions taking `&TestContext` and returning anything that implements
+//! [`IntoTestResult`], then registers them with the [`suite!`] macro, which
+//! generates the `wasi:test/tests` export.
 
 use std::{
     borrow::Cow,

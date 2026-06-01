@@ -1,10 +1,12 @@
-//! Generic `wasi:test` runner. Ported from Lann Martin's `wasi:test` prototype
-//! (<https://github.com/lann/wasi-test>, `runner-cli`).
+//! Credit: ported from Lann Martin's `wasi:test` prototype.
+//!   Source: <https://github.com/lann/wasi-test> (`runner-cli`)
+//!   Author: Lann Martin. Reused here with thanks.
 //!
-//! Imports `wasi:test/tests` and exports `wasi:cli/run` (via `fn main`). It
-//! runs every test returned by `all()`, prints `PASS`/`FAIL` per test, streams
-//! and prints logs for failures, and exits non-zero if any test failed. This
-//! single binary is reused (via composition) for every component under test.
+//! Generic `wasi:test` runner. Imports `wasi:test/tests` and exports
+//! `wasi:cli/run` (via `fn main`). It runs every test returned by `all()`,
+//! prints `PASS`/`FAIL` per test, streams and prints logs for failures, and
+//! exits non-zero if any test failed. This single binary is reused (via
+//! composition) for every component under test.
 
 use crate::wasi::test::tests::{TestContext, TestOptions, TestResult};
 
