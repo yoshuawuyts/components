@@ -1,0 +1,24 @@
+// Import side of the tablemark test suite.
+//
+// These are the tablemark component's world-level exports, duplicated here as
+// *imports* so the suite can call them. This is the deliberate, temporary
+// duplication noted in the testing strategy: tablemark exports bare world
+// functions (not a named interface), so there is no shared interface package to
+// depend on. At composition time, `wac compose` wires the component's exports
+// directly into these imports (e.g. `to-xlsx: cut["to-xlsx"]`), and the
+// component-model type identity flows from the component's export into this
+// import - so these signatures must mirror tablemark's exactly. Keep this file
+// in sync with `components/tablemark/wit/world.wit`.
+//
+// NOTE: every type here is a plain value type (string / list<u8> / result).
+// Structural matching does NOT extend to `resource` / handle / borrow types.
+package yosh:tablemark-imports;
+
+world imports {
+    /// Convert tabular data from an XLSX workbook to a Markdown document.
+    import to-markdown: func(xlsx: list<u8>) -> result<string, string>;
+
+    /// Convert a Markdown document containing GitHub-flavored Markdown tables
+    /// to an XLSX workbook.
+    import to-xlsx: func(markdown: string) -> result<list<u8>, string>;
+}

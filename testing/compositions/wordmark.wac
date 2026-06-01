@@ -1,0 +1,26 @@
+// Composition for the `wordmark` component test suite.
+//
+// See `textsearch.wac` for a full explanation of the wiring. In short: the CUT
+// (`yosh:wordmark`) exports bare world functions, which are wired explicitly
+// into the suite's imports; `...` flows WASI imports up to the composed
+// component; the runner's `wasi:cli/run` export is the entry point.
+//
+// Package names are bound to built `.wasm` files via
+// `wac compose --dep <name>=<path>` (see the `test-component` recipe in the
+// repo `justfile`).
+package yosh:wordmark-test;
+
+let cut = new yosh:wordmark { ... };
+
+let suite = new yosh:wordmark-tests {
+    to-word: cut["to-word"],
+    to-markdown: cut["to-markdown"],
+    ...
+};
+
+let runner = new yosh:test-runner {
+    "wasi:test/tests": suite["wasi:test/tests"],
+    ...
+};
+
+export runner["wasi:cli/run@0.2.0"];

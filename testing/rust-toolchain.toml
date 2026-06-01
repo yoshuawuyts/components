@@ -1,0 +1,5 @@
+[toolchain]
+# wit-bindgen 0.46's async stream support requires nightly Rust, matching the
+# upstream `wasi:test` prototype's toolchain.
+channel = "nightly"
+targets = ["wasm32-wasip2"]

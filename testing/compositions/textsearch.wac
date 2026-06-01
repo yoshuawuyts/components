@@ -1,0 +1,37 @@
+// Composition for the `textsearch` component test suite.
+//
+// Wires three Wasm components into a single runnable component:
+//   * `yosh:textsearch`        - the component under test (CUT)
+//   * `yosh:textsearch-tests`  - the test suite (exports `wasi:test/tests`)
+//   * `yosh:test-runner`       - the generic runner (exports `wasi:cli/run`)
+//
+// The CUT exports bare world-level functions with inline record types. Each one
+// is wired explicitly into the suite's matching import; component-model type
+// identity flows from the CUT's export into the suite's structurally-identical
+// import (this is the mechanism the testing strategy relies on, validated
+// empirically). `...` lets every remaining import - the WASI interfaces each
+// component needs - flow up to the composed component, where wasmtime satisfies
+// them at run time.
+//
+// The package names below (`yosh:textsearch`, `yosh:textsearch-tests`,
+// `yosh:test-runner`) are bound to built `.wasm` files via
+// `wac compose --dep <name>=<path>`; see the `test-component` recipe in the repo
+// `justfile`.
+package yosh:textsearch-test;
+
+let cut = new yosh:textsearch { ... };
+
+let suite = new yosh:textsearch-tests {
+    search: cut.search,
+    replace: cut.replace,
+    search-files: cut["search-files"],
+    replace-files: cut["replace-files"],
+    ...
+};
+
+let runner = new yosh:test-runner {
+    "wasi:test/tests": suite["wasi:test/tests"],
+    ...
+};
+
+export runner["wasi:cli/run@0.2.0"];

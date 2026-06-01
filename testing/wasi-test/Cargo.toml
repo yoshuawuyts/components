@@ -1,0 +1,12 @@
+[package]
+# Credit: ported from Lann Martin's `wasi:test` prototype
+# (https://github.com/lann/wasi-test); see the crate's lib.rs header.
+# Unpublished and carries no license claim. See testing/README.md "Credits and
+# provenance".
+name = "wasi-test"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+wit-bindgen = "0.46.0"
