@@ -13,6 +13,7 @@ on:
           - textsearch
           - docs
           - acp
+          - color
       version:
         description: "Version to publish (e.g. 1.2.0)"
         required: true
@@ -105,7 +106,7 @@ jobs:
           push-to-registry: true
 
   publish-interface:
-    if: ${{ inputs.target == 'docs' || inputs.target == 'acp' }}
+    if: ${{ inputs.target == 'docs' || inputs.target == 'acp' || inputs.target == 'color' }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -129,6 +130,7 @@ jobs:
           case "${INTERFACE_NAME}" in
             docs) desc="Documentation interface types for WebAssembly components" ;;
             acp)  desc="Agent Client Protocol (ACP) interface types for WebAssembly components" ;;
+            color) desc="CSS color types and a resource-based color-space converter for WebAssembly components" ;;
             *) echo "Unknown interface: ${INTERFACE_NAME}" >&2; exit 1 ;;
           esac
           echo "INTERFACE_DESCRIPTION=${desc}" >> "$GITHUB_ENV"
