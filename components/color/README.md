@@ -12,8 +12,8 @@ Oklch, and Okhsl, each carrying a straight alpha channel.
 Internally every color is stored as CIE XYZ (D65 white point), an unbounded,
 device-independent hub. Converting through it is (near) lossless for every
 space, including wide-gamut colors outside the sRGB cube. The bounded display
-spaces (`srgb`, `hsl`, `hwb`, hex) are clamped into the sRGB gamut on output;
-the perceptual spaces (`lab`, `lch`, `oklab`, `oklch`, `okhsl`) are returned
+spaces (`srgb`, `hsl`, `hwb`, `okhsl`, hex) are clamped into the sRGB gamut on
+output; the perceptual spaces (`lab`, `lch`, `oklab`, `oklch`) are returned
 unclamped.
 
 ```wit

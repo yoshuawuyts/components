@@ -34,6 +34,7 @@ use palette::{
     chromatic_adaptation::AdaptInto, convert::FromColorUnclamped, encoding, white_point::D50,
     white_point::D65, Hsl, Hwb, Lab, Lch, Okhsl, Oklab, Oklch, Srgb, Xyz,
 };
+use std::convert::TryFrom;
 
 /// Device-independent hub the component stores every color in.
 type Hub = Xyz<D65, f32>;
@@ -108,6 +109,19 @@ fn check_finite(values: &[f32]) -> Result<(), ColorError> {
     }
 }
 
+/// Reject bounded color components that fall outside the documented
+/// `[0.0, 1.0]` range. NaN values also fail this check, so it implies
+/// `check_finite` for the channels it covers.
+fn check_unit(values: &[f32]) -> Result<(), ColorError> {
+    if values.iter().all(|v| (0.0..=1.0).contains(v)) {
+        Ok(())
+    } else {
+        Err(ColorError::OutOfRange(
+            "color components must be in [0.0, 1.0]".to_string(),
+        ))
+    }
+}
+
 /// Normalize HWB whiteness/blackness the way CSS does: clamp negatives to zero
 /// and, when they sum to more than one, scale them so the sum is one (the color
 /// is then an achromatic gray).
@@ -150,14 +164,15 @@ impl GuestColor for ColorValue {
 
     fn from_srgb(value: WitSrgb, alpha: f32) -> Result<Color, ColorError> {
         let alpha = check_alpha(alpha)?;
-        check_finite(&[value.red, value.green, value.blue])?;
+        check_unit(&[value.red, value.green, value.blue])?;
         let c = SrgbF::new(value.red, value.green, value.blue);
         Ok(Self::handle(Hub::from_color_unclamped(c), alpha))
     }
 
     fn from_hsl(value: WitHsl, alpha: f32) -> Result<Color, ColorError> {
         let alpha = check_alpha(alpha)?;
-        check_finite(&[value.hue, value.saturation, value.lightness])?;
+        check_finite(&[value.hue])?;
+        check_unit(&[value.saturation, value.lightness])?;
         let c = HslF::new(value.hue, value.saturation, value.lightness);
         Ok(Self::handle(Hub::from_color_unclamped(c), alpha))
     }
@@ -206,7 +221,8 @@ impl GuestColor for ColorValue {
 
     fn from_okhsl(value: WitOkhsl, alpha: f32) -> Result<Color, ColorError> {
         let alpha = check_alpha(alpha)?;
-        check_finite(&[value.hue, value.saturation, value.lightness])?;
+        check_finite(&[value.hue])?;
+        check_unit(&[value.saturation, value.lightness])?;
         let c = OkhslF::new(value.hue, value.saturation, value.lightness);
         Ok(Self::handle(Hub::from_color_unclamped(c), alpha))
     }
@@ -362,7 +378,11 @@ mod tests {
     fn assert_close(label: &str, got: f32, want: f32, eps: f32) {
         assert!(
             (got - want).abs() <= eps,
-            "{label}: got {got}, want {want} (eps {eps})"
+            "{}: got {}, want {} (eps {})",
+            label,
+            got,
+            want,
+            eps
         );
     }
 
@@ -397,7 +417,8 @@ mod tests {
         for bad in ["ff0000", "#fffff", "#gggggg", "#12345", ""] {
             assert!(
                 matches!(parse_hex(bad), Err(ColorError::InvalidHex(_))),
-                "expected {bad:?} to be rejected"
+                "expected {:?} to be rejected",
+                bad
             );
         }
     }
@@ -525,6 +546,43 @@ mod tests {
         };
         assert!(matches!(
             ColorValue::from_srgb(value, 1.5),
+            Err(ColorError::OutOfRange(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_out_of_range_bounded_components() {
+        assert!(matches!(
+            ColorValue::from_srgb(
+                WitSrgb {
+                    red: 1.5,
+                    green: 0.0,
+                    blue: 0.0,
+                },
+                1.0,
+            ),
+            Err(ColorError::OutOfRange(_))
+        ));
+        assert!(matches!(
+            ColorValue::from_hsl(
+                WitHsl {
+                    hue: 120.0,
+                    saturation: 1.2,
+                    lightness: 0.5,
+                },
+                1.0,
+            ),
+            Err(ColorError::OutOfRange(_))
+        ));
+        assert!(matches!(
+            ColorValue::from_okhsl(
+                WitOkhsl {
+                    hue: 120.0,
+                    saturation: 0.5,
+                    lightness: -0.1,
+                },
+                1.0,
+            ),
             Err(ColorError::OutOfRange(_))
         ));
     }
