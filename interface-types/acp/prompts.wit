@@ -1,5 +1,9 @@
-package yoshuawuyts:acp@2.0.3;
+package yosh:acp;
 
+/// Prompt turns, streaming session updates, and slash commands.
+///
+/// See: <https://agentclientprotocol.com/protocol/prompt-turn>
+///      <https://agentclientprotocol.com/protocol/slash-commands>
 /// Prompt turns, streaming session updates, and slash commands.
 ///
 /// See: <https://agentclientprotocol.com/protocol/prompt-turn>

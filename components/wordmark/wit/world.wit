@@ -1,4 +1,4 @@
-package yoshuawuyts:wordmark;
+package yosh:wordmark;
 
 world wordmark {
     /// Convert a markdown document to a Word (.docx) document.

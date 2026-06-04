@@ -1,4 +1,4 @@
-package yoshuawuyts:acp@2.0.3;
+package yosh:acp;
 
 /// Protocol errors, modelled after JSON-RPC 2.0.
 ///

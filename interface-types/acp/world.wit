@@ -1,4 +1,4 @@
-package yoshuawuyts:acp@2.0.3;
+package yosh:acp;
 
 /// An ACP agent component: exports [`agent`] (driven by the host) and imports
 /// [`client`] (for fs, terminal, and permission callbacks).
@@ -10,14 +10,26 @@ world provider {
     import client;
 }
 
-/// An ACP layer component: wraps a downstream [`provider`] (or another
-/// [`layer`]) with the same protocol on both sides. Exports [`agent`]
-/// upstream, imports [`agent`] downstream, and inherits the [`client`]
-/// import from [`provider`].
+/// An ACP layer component: bidirectional middleware that wraps a downstream
+/// [`provider`] (or another [`layer`]) with the same protocol on both sides
+/// and in both directions.
 ///
-/// Useful for logging, prompt rewriting, tool-call filtering, or routing
-/// across backends. Analogous to a `tower::Layer`.
+/// On the downstream (agent) side, a layer exports [`agent`] upstream and
+/// imports [`agent`] from the next stage — letting it intercept prompts,
+/// tool calls, and session control flowing toward the provider.
+///
+/// On the upstream (client) side, a layer exports [`client`] (called by the
+/// next stage's [`client`] import) and imports [`client`] from the previous
+/// stage or host — letting it intercept `update-session` notifications, fs
+/// callbacks, terminal ops, and permission requests flowing back toward the
+/// editor.
+///
+/// Useful for logging, prompt rewriting, tool-call filtering, denying
+/// permission requests, rewriting session updates, or routing across
+/// backends.
 world layer {
-    include provider;
+    export agent;
     import agent;
+    export client;
+    import client;
 }

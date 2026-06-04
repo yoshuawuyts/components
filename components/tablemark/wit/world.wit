@@ -1,4 +1,4 @@
-package yoshuawuyts:tablemark;
+package yosh:tablemark;
 
 world tablemark {
     /// Convert tabular data from an XLSX workbook to a Markdown document.

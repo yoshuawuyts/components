@@ -1,0 +1,15 @@
+# Separate workspace for the Wasm-component test harness.
+#
+# This is intentionally NOT part of the root workspace (the root excludes
+# `testing/`). The crates here use wit-bindgen 0.46 + the async component-model
+# stream ABI and only build for `wasm32-wasip2`; the root workspace runs
+# `cargo check --all` / `cargo test --all` on the native host, which would fail
+# on these wasm-only async crates. Keeping them isolated lets the components
+# stay on wit-bindgen 0.36, unchanged.
+[workspace]
+members = ["wasi-test", "runner-cli", "suites/*"]
+resolver = "3"
+
+[profile.release]
+# Smaller composed components; harness code is not perf-sensitive.
+opt-level = "s"

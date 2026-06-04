@@ -1,4 +1,4 @@
-package yoshuawuyts:acp@2.0.3;
+package yosh:acp;
 
 /// Session lifecycle types: identifiers, MCP server configuration, modes, and
 /// new/load/list/resume payloads.
@@ -80,6 +80,25 @@ interface sessions {
     }
 
     // ------------------------------------------------------------------
+    // Component provenance
+    // ------------------------------------------------------------------
+
+    /// Identifies the component (provider or layer) that contributed a
+    /// session mode or model.
+    ///
+    /// Providers set this to their own component id. Layers that
+    /// synthesize new modes/models (which the downstream stage doesn't
+    /// know about) set this to their own component id; layers
+    /// forwarding downstream entries MUST pass the existing value
+    /// through unchanged.
+    record component-source {
+        /// Stable component identifier. Format is host-defined but
+        /// conventionally `namespace:name` (e.g. `local:plan-layer`,
+        /// `ghcr.io/yosh:ollama-provider`).
+        component-id: string,
+    }
+
+    // ------------------------------------------------------------------
     // Session modes
     //
     // See: https://agentclientprotocol.com/protocol/session-modes
@@ -94,6 +113,11 @@ interface sessions {
         name: string,
         /// Optional longer description.
         description: option<string>,
+        /// Which component contributed this mode. Layers that synthesize
+        /// new modes set this to their own component id; layers
+        /// forwarding downstream entries pass it through unchanged.
+        /// Providers set it to their own component id.
+        provided-by: component-source,
     }
 
     /// The set of modes available for a session and which one is active.

@@ -1,4 +1,4 @@
-package yoshuawuyts:acp@2.0.3;
+package yosh:acp;
 
 /// Displayable content blocks. Mirrors MCP's `ContentBlock` so that MCP tool
 /// output can be forwarded without transformation.
