@@ -12,6 +12,7 @@
 | `wordmark`   | Convert between Markdown and Word (`.docx`) documents |
 | `tablemark`  | Convert between Markdown tables and `.xlsx` workbooks |
 | `textsearch` | Regex find/replace over text, powered by `ripgrep`'s engine |
+| `color`      | Convert between CSS color spaces (sRGB, HSL, HWB, Lab, LCH, Oklab, Oklch, Okhsl) |
 
 ## Interfaces
 
@@ -20,7 +21,6 @@ WIT interface definitions (no component implementation).
 | Name    | Description                                                       |
 | ------- | ----------------------------------------------------------------- |
 | `acp`   | WIT definition of the [Agent Client Protocol][acp]                |
-| `color` | WIT definition of CSS color types and a resource-based converter  |
 
 [acp]: https://agentclientprotocol.com
 
