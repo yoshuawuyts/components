@@ -24,7 +24,7 @@ env:
 
 jobs:
   publish-component:
-    if: ${{ inputs.target == 'wordmark' || inputs.target == 'tablemark' || inputs.target == 'textsearch' }}
+    if: ${{ inputs.target == 'wordmark' || inputs.target == 'tablemark' || inputs.target == 'textsearch' || inputs.target == 'color' }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -48,6 +48,7 @@ jobs:
             wordmark)   desc="Convert between Markdown and Word documents" ;;
             tablemark)  desc="Convert between Markdown tables and XLSX workbooks" ;;
             textsearch) desc="Regex find/replace over text, powered by ripgrep's engine" ;;
+            color)      desc="Convert between CSS color spaces (sRGB, HSL, HWB, Lab, LCH, Oklab, Oklch, Okhsl)" ;;
             *) echo "Unknown component: ${COMPONENT_NAME}" >&2; exit 1 ;;
           esac
           echo "COMPONENT_DESCRIPTION=${desc}" >> "$GITHUB_ENV"
@@ -80,6 +81,18 @@ jobs:
       - name: Add wasm32-wasip2 target
         run: rustup target add wasm32-wasip2
 
+      - name: Set component WIT package version
+        # `color` is the only component whose WIT declares a versioned package
+        # (`yoshuawuyts:color@<version>`), and that version becomes the exported
+        # interface identity. Rewrite it to match the published version so
+        # consumers importing `yoshuawuyts:color/conversion@<version>` resolve.
+        if: ${{ inputs.target == 'color' }}
+        run: |
+          for f in components/${COMPONENT_NAME}/wit/*.wit; do
+            sed -i -E "s/^(package [a-z0-9-]+:[a-z0-9-]+)(@[^;]*)?;/\1@${{ inputs.version }};/" "$f"
+            head -n1 "$f"
+          done
+
       - name: Build the component
         run: cargo build -p ${{ env.COMPONENT_NAME }} --release --target wasm32-wasip2
 
@@ -106,7 +119,7 @@ jobs:
           push-to-registry: true
 
   publish-interface:
-    if: ${{ inputs.target == 'docs' || inputs.target == 'acp' || inputs.target == 'color' }}
+    if: ${{ inputs.target == 'docs' || inputs.target == 'acp' }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -130,7 +143,6 @@ jobs:
           case "${INTERFACE_NAME}" in
             docs) desc="Documentation interface types for WebAssembly components" ;;
             acp)  desc="Agent Client Protocol (ACP) interface types for WebAssembly components" ;;
-            color) desc="CSS color types and a resource-based color-space converter for WebAssembly components" ;;
             *) echo "Unknown interface: ${INTERFACE_NAME}" >&2; exit 1 ;;
           esac
           echo "INTERFACE_DESCRIPTION=${desc}" >> "$GITHUB_ENV"

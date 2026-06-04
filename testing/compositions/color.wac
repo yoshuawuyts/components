@@ -1,0 +1,32 @@
+// Composition for the `color` component test suite.
+//
+// Wires three Wasm components into a single runnable component:
+//   * `yosh:color`            - the component under test (CUT)
+//   * `yosh:color-tests`      - the test suite (exports `wasi:test/tests`)
+//   * `yosh:test-runner`      - the generic runner (exports `wasi:cli/run`)
+//
+// Unlike the other suites, the CUT exports a *named* interface
+// (`yoshuawuyts:color/conversion@0.1.0`) whose `color` resource carries handle types.
+// That whole interface is wired into the suite's matching import by interface
+// identity (resources can't be matched structurally). `...` lets every
+// remaining import flow up to the composed component, where wasmtime satisfies
+// the WASI interfaces at run time.
+//
+// The package names below are bound to built `.wasm` files via
+// `wac compose --dep <name>=<path>`; see the `test-component` recipe in the repo
+// `justfile`.
+package yosh:color-test;
+
+let cut = new yosh:color { ... };
+
+let suite = new yosh:color-tests {
+    "yoshuawuyts:color/conversion@0.1.0": cut["yoshuawuyts:color/conversion@0.1.0"],
+    ...
+};
+
+let runner = new yosh:test-runner {
+    "wasi:test/tests": suite["wasi:test/tests"],
+    ...
+};
+
+export runner["wasi:cli/run@0.2.0"];

@@ -26,7 +26,7 @@ interface types {
     }
 
     /// CIE L*a*b* color: lightness in [0.0, 100.0], a* and b* typically in
-    /// [-128.0, 127.0].
+    /// [-128.0, 127.0]. Uses the D50 white point, matching CSS Color 4.
     record lab {
         lightness: f32,
         a: f32,
@@ -34,7 +34,8 @@ interface types {
     }
 
     /// CIE LCH (cylindrical L*a*b*) color: lightness in [0.0, 100.0], chroma
-    /// >= 0.0, hue in degrees [0.0, 360.0).
+    /// >= 0.0, hue in degrees [0.0, 360.0). Uses the D50 white point, matching
+    /// CSS Color 4.
     record lch {
         lightness: f32,
         chroma: f32,
