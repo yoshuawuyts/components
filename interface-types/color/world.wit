@@ -51,8 +51,8 @@ interface types {
         b: f32,
     }
 
-    /// Oklch color (cylindrical Oklab, also called OKHCL): lightness in
-    /// [0.0, 1.0], chroma >= 0.0, hue in degrees [0.0, 360.0).
+    /// Oklch color (cylindrical Oklab): lightness in [0.0, 1.0], chroma
+    /// >= 0.0, hue in degrees [0.0, 360.0).
     ///
     /// See: <https://bottosson.github.io/posts/oklab/>
     record oklch {
@@ -108,7 +108,7 @@ interface conversion {
         from-hex: static func(value: string) -> result<color, color-error>;
 
         /// Construct from sRGB components, with explicit alpha in [0.0, 1.0].
-        from-rgb: static func(value: srgb, alpha: f32) -> result<color, color-error>;
+        from-srgb: static func(value: srgb, alpha: f32) -> result<color, color-error>;
 
         /// Construct from HSL components, with explicit alpha in [0.0, 1.0].
         from-hsl: static func(value: hsl, alpha: f32) -> result<color, color-error>;
@@ -127,8 +127,7 @@ interface conversion {
         /// Construct from Oklab components, with explicit alpha in [0.0, 1.0].
         from-oklab: static func(value: oklab, alpha: f32) -> result<color, color-error>;
 
-        /// Construct from Oklch (OKHCL) components, with explicit alpha in
-        /// [0.0, 1.0].
+        /// Construct from Oklch components, with explicit alpha in [0.0, 1.0].
         from-oklch: static func(value: oklch, alpha: f32) -> result<color, color-error>;
 
         /// Construct from Okhsl components, with explicit alpha in [0.0, 1.0].
@@ -143,7 +142,7 @@ interface conversion {
         to-hex: func() -> string;
 
         /// Convert to sRGB.
-        to-rgb: func() -> srgb;
+        to-srgb: func() -> srgb;
 
         /// Convert to HSL.
         to-hsl: func() -> hsl;
@@ -160,7 +159,7 @@ interface conversion {
         /// Convert to Oklab.
         to-oklab: func() -> oklab;
 
-        /// Convert to Oklch (OKHCL).
+        /// Convert to Oklch.
         to-oklch: func() -> oklch;
 
         /// Convert to Okhsl.
@@ -169,6 +168,6 @@ interface conversion {
 }
 
 /// Implemented by any component that provides color conversion.
-world color-converter {
+world convert {
     export conversion;
 }
