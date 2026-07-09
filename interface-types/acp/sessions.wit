@@ -13,6 +13,11 @@ interface sessions {
     /// Unique identifier for a session mode.
     type session-mode-id = string;
 
+    /// Unique identifier for a session model. **UNSTABLE** — mirrors
+    /// the unstable `session/set_model` capability in upstream ACP.
+    /// Selectable independently of `session-mode`.
+    type session-model-id = string;
+
     // ------------------------------------------------------------------
     // Common helpers
     // ------------------------------------------------------------------
@@ -137,6 +142,111 @@ interface sessions {
     }
 
     // ------------------------------------------------------------------
+    // Session models (UNSTABLE)
+    //
+    // Mirrors the unstable `session/set_model` capability in upstream
+    // ACP. Models are orthogonal to modes: a session has one active
+    // mode (how the agent behaves) AND one active model (which LLM
+    // backs it).
+    // ------------------------------------------------------------------
+
+    /// A selectable model for a session. **UNSTABLE**.
+    record session-model {
+        /// Stable identifier (e.g. `"llama3.2:8b"`, `"gpt-4o"`).
+        id: session-model-id,
+        /// Human-readable name.
+        name: string,
+        /// Optional longer description.
+        description: option<string>,
+        /// Which component contributed this model.
+        provided-by: component-source,
+    }
+
+    /// The set of models available for a session and which one is
+    /// active. **UNSTABLE**.
+    record session-model-state {
+        /// The currently active model.
+        current-model-id: session-model-id,
+        /// All models the agent can run for this session.
+        available-models: list<session-model>,
+    }
+
+    /// Parameters to `select-model`. **UNSTABLE**.
+    record select-model-request {
+        /// The session whose model is being changed.
+        session-id: session-id,
+        /// The model to switch to. MUST be one of `available-models`.
+        model-id: session-model-id,
+    }
+
+    // ------------------------------------------------------------------
+    // Session configuration options
+    //
+    // The unified selector mechanism that supersedes the legacy
+    // `modes`/`models` fields. Each option is a labelled dropdown with a
+    // semantic `category` (mode / model / thought-level) that clients use
+    // for UX placement and keyboard shortcuts. Setting a value
+    // round-trips through `set-config-option`, which returns the full
+    // updated option set.
+    //
+    // See: https://agentclientprotocol.com/protocol/session-config
+    // ------------------------------------------------------------------
+
+    /// Unique identifier for a configuration option (e.g. `"model"`,
+    /// `"reasoning-effort"`).
+    type session-config-id = string;
+
+    /// Unique identifier for one selectable value of a configuration
+    /// option (e.g. `"gpt-4o"`, `"high"`).
+    type session-config-value-id = string;
+
+    /// Semantic category for a configuration option. Clients use this to
+    /// place the selector and bind shortcuts; it MUST NOT be required for
+    /// correctness, and clients MUST handle unknown categories
+    /// gracefully.
+    variant session-config-option-category {
+        /// Session mode selector.
+        mode,
+        /// Model selector.
+        model,
+        /// Thought / reasoning level selector.
+        thought-level,
+        /// Uncategorized selector, carrying its raw category string.
+        other(string),
+    }
+
+    /// One selectable value of a `select`-type configuration option.
+    record session-config-select-option {
+        /// Stable identifier for this value.
+        value: session-config-value-id,
+        /// Human-readable label.
+        name: string,
+        /// Optional longer description.
+        description: option<string>,
+    }
+
+    /// A single-value selector (dropdown) configuration option and its
+    /// current state.
+    record session-config-option {
+        /// Stable identifier for this option.
+        id: session-config-id,
+        /// Human-readable label.
+        name: string,
+        /// Optional longer description.
+        description: option<string>,
+        /// Optional semantic category (UX only).
+        category: option<session-config-option-category>,
+        /// The currently selected value. MUST be one of `options`.
+        current-value: session-config-value-id,
+        /// The selectable values.
+        options: list<session-config-select-option>,
+        /// Which component contributed this option. Providers set it to
+        /// their own component id; layers pass downstream entries through
+        /// unchanged.
+        provided-by: component-source,
+    }
+
+    // ------------------------------------------------------------------
     // New / load
     //
     // See: https://agentclientprotocol.com/protocol/session-setup
@@ -156,6 +266,13 @@ interface sessions {
         session-id: session-id,
         /// Modes the agent can operate in for this session, if any.
         modes: option<session-mode-state>,
+        /// Models the agent can run for this session, if any.
+        /// **UNSTABLE**.
+        models: option<session-model-state>,
+        /// Configuration option selectors (model / mode / thought-level)
+        /// for this session, if any. Supersedes `modes`/`models` on
+        /// clients that support it.
+        config-options: option<list<session-config-option>>,
     }
 
     /// Parameters to `load-session` (only valid if
@@ -173,6 +290,13 @@ interface sessions {
     record load-session-response {
         /// Modes the agent can operate in for this session, if any.
         modes: option<session-mode-state>,
+        /// Models the agent can run for this session, if any.
+        /// **UNSTABLE**.
+        models: option<session-model-state>,
+        /// Configuration option selectors (model / mode / thought-level)
+        /// for this session, if any. Supersedes `modes`/`models` on
+        /// clients that support it.
+        config-options: option<list<session-config-option>>,
     }
 
     // ------------------------------------------------------------------
@@ -224,6 +348,13 @@ interface sessions {
     record resume-session-response {
         /// Modes the agent can operate in for this session, if any.
         modes: option<session-mode-state>,
+        /// Models the agent can run for this session, if any.
+        /// **UNSTABLE**.
+        models: option<session-model-state>,
+        /// Configuration option selectors (model / mode / thought-level)
+        /// for this session, if any. Supersedes `modes`/`models` on
+        /// clients that support it.
+        config-options: option<list<session-config-option>>,
     }
 
     /// Update to a session's metadata, pushed by the agent. Only included

@@ -2,214 +2,161 @@ package yosh:acp;
 
 /// Tool calls, plans, and permission requests.
 ///
+/// Tool calls are resource-shaped: the agent constructs a
+/// [`tool-call`] when it starts dispatching, applies `update`s as the
+/// call progresses, and drops it when the call ends. The tool-call's
+/// state is mirrored to the surrounding [`agent.prompt-turn`]'s
+/// `updates` stream as `session-update::ToolCall` /
+/// `session-update::ToolCallUpdate` entries — guests don't write
+/// those variants directly.
+///
 /// See: <https://agentclientprotocol.com/protocol/tool-calls>
 ///      <https://agentclientprotocol.com/protocol/agent-plan>
 interface tools {
-    use sessions.{session-id};
     use content.{content-block};
     use terminals.{terminal-id};
 
-    /// Unique identifier for a tool call within a session.
+    /// Unique identifier for a tool call within a session. Used in
+    /// the streamed `session-update`s the client sees; guests construct
+    /// `tool-call` resources rather than referencing ids directly.
     type tool-call-id = string;
 
-    // ------------------------------------------------------------------
-    // Tool calls
-    // ------------------------------------------------------------------
+    /// An active tool call. Construct with [`tool-call.constructor`]
+    /// to announce the call to the parent prompt-turn; apply
+    /// [`update`] to mutate state; drop when the call ends (the
+    /// `status` at drop time is the call's final state).
+    resource tool-call {
+        /// Begin a tool call. Initial state is announced to the
+        /// parent prompt-turn's update stream as a
+        /// `session-update::ToolCall`.
+        constructor(initial: tool-call-init);
 
-    /// A tool call initiated by the language model and executed by the agent.
-    record tool-call {
-        /// Unique id of this tool call within the session.
+        /// Mutate one or more fields of the tool call. Each call
+        /// emits a `session-update::ToolCallUpdate` carrying the
+        /// patch into the parent prompt-turn's stream.
+        update: async func(patch: tool-call-patch);
+    }
+
+    /// Initial state used to construct a [`tool-call`].
+    record tool-call-init {
+        /// Unique id assigned by the agent. Surfaced to clients via
+        /// the streamed update; not used to identify the resource on
+        /// the wasm side.
         id: tool-call-id,
         /// Human-readable title (e.g. `"Reading config.json"`).
         title: string,
         /// Category, used by clients to pick icons / display treatment.
         kind: tool-kind,
-        /// Current execution status.
+        /// Initial execution status.
         status: tool-call-status,
         /// Content produced so far.
         content: list<tool-call-content>,
-        /// File locations this call is touching, for follow-along UI.
+        /// File locations this call is touching.
         locations: list<tool-call-location>,
-        /// Raw JSON-encoded input parameters, if the agent wishes to share.
+        /// Raw JSON-encoded input parameters.
         raw-input: option<string>,
-        /// Raw JSON-encoded output, if any.
-        raw-output: option<string>,
     }
 
-    /// An update to an existing tool call. Only changed fields are populated.
-    record tool-call-update {
-        /// Which tool call to update.
-        id: tool-call-id,
-        /// Replace the title.
+    /// A patch to apply to an active [`tool-call`]. Each field is
+    /// optional; only populated fields are changed.
+    record tool-call-patch {
         title: option<string>,
-        /// Replace the kind.
         kind: option<tool-kind>,
-        /// Replace the status.
         status: option<tool-call-status>,
-        /// Replace the content collection.
         content: option<list<tool-call-content>>,
-        /// Replace the locations collection.
         locations: option<list<tool-call-location>>,
-        /// Replace raw input.
         raw-input: option<string>,
-        /// Replace raw output.
         raw-output: option<string>,
     }
 
     /// Categories of tools.
-    ///
-    /// See: <https://agentclientprotocol.com/protocol/tool-calls#creating>
     enum tool-kind {
-        /// Reading files or data.
-        read,
-        /// Modifying files or content.
-        edit,
-        /// Removing files or data.
-        delete,
-        /// Moving or renaming files.
-        move,
-        /// Searching for information.
-        search,
-        /// Running commands or code.
-        execute,
-        /// Internal reasoning or planning.
-        think,
-        /// Retrieving external data.
-        fetch,
-        /// Anything else.
-        other,
+        read, edit, delete, move, search, execute, think, fetch, other,
     }
 
     /// Lifecycle states of a tool call.
-    ///
-    /// See: <https://agentclientprotocol.com/protocol/tool-calls#status>
     enum tool-call-status {
-        /// Awaiting input streaming or permission.
-        pending,
-        /// Currently running.
-        in-progress,
-        /// Finished successfully.
-        completed,
-        /// Failed with an error.
-        failed,
+        pending, in-progress, completed, failed,
     }
 
     /// Output produced by a tool call.
-    ///
-    /// See: <https://agentclientprotocol.com/protocol/tool-calls#content>
     variant tool-call-content {
-        /// A standard content block.
         content(content-block),
-        /// A file modification, displayed as a diff.
         diff(diff),
-        /// A reference to a live terminal created via `create-terminal`.
         terminal(terminal-id),
     }
 
     /// A diff against a single file.
     record diff {
-        /// Absolute path of the file.
         path: string,
-        /// Original content. `none` for new files.
         old-text: option<string>,
-        /// New content after modification.
         new-text: string,
     }
 
     /// A file location a tool call is operating on.
-    ///
-    /// See: <https://agentclientprotocol.com/protocol/tool-calls#following-the-agent>
     record tool-call-location {
-        /// Absolute file path.
         path: string,
-        /// Optional 1-based line number within the file.
         line: option<u32>,
     }
 
     // ------------------------------------------------------------------
     // Plans
-    //
-    // See: https://agentclientprotocol.com/protocol/agent-plan
     // ------------------------------------------------------------------
 
-    /// An execution plan reported by the agent.
     record plan {
-        /// Tasks the agent intends to accomplish.
         entries: list<plan-entry>,
     }
 
-    /// A single planned task.
     record plan-entry {
-        /// Human-readable description.
         content: string,
-        /// Importance.
         priority: plan-entry-priority,
-        /// Lifecycle state.
         status: plan-entry-status,
     }
 
-    /// Priority of a plan entry.
-    enum plan-entry-priority {
-        high,
-        medium,
-        low,
-    }
-
-    /// Lifecycle state of a plan entry.
-    enum plan-entry-status {
-        pending,
-        in-progress,
-        completed,
-    }
+    enum plan-entry-priority { high, medium, low }
+    enum plan-entry-status { pending, in-progress, completed }
 
     // ------------------------------------------------------------------
     // Permission requests (agent → client)
-    //
-    // See: https://agentclientprotocol.com/protocol/tool-calls#requesting-permission
     // ------------------------------------------------------------------
 
-    /// Parameters to `request-permission`.
+    /// Snapshot of a tool call's current state as part of a permission
+    /// request. Carries the value (not a resource handle) so the
+    /// client can render the request without participating in
+    /// resource ownership.
+    record tool-call-snapshot {
+        id: tool-call-id,
+        title: string,
+        kind: tool-kind,
+        status: tool-call-status,
+        content: list<tool-call-content>,
+        locations: list<tool-call-location>,
+        raw-input: option<string>,
+        raw-output: option<string>,
+    }
+
     record request-permission-request {
-        /// The session this permission request belongs to.
-        session-id: session-id,
-        /// The tool call awaiting approval.
-        tool-call: tool-call-update,
-        /// Choices to present to the user.
+        session-id: string,
+        tool-call: tool-call-snapshot,
         options: list<permission-option>,
     }
 
-    /// A choice the user can pick when granting/denying permission.
     record permission-option {
-        /// Stable id; returned in the response if selected.
         id: string,
-        /// Human-readable label.
         name: string,
-        /// UI hint.
         kind: permission-option-kind,
     }
 
-    /// UI hint for a permission option.
     enum permission-option-kind {
-        allow-once,
-        allow-always,
-        reject-once,
-        reject-always,
+        allow-once, allow-always, reject-once, reject-always,
     }
 
-    /// Response to `request-permission`.
     record request-permission-response {
-        /// The user's decision.
         outcome: permission-outcome,
     }
 
-    /// Outcome of a permission request.
     variant permission-outcome {
-        /// The current prompt turn was cancelled before the user responded.
-        /// Clients MUST return this when responding to permission requests
-        /// after receiving `cancel`.
-        cancelled,
-        /// The user picked one of the offered options. The string is the
-        /// `permission-option.id` of the selected option.
         selected(string),
+        cancelled,
     }
 }
