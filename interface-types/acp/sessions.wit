@@ -200,6 +200,11 @@ interface sessions {
     /// option (e.g. `"gpt-4o"`, `"high"`).
     type session-config-value-id = string;
 
+    /// Unique identifier for a group of selectable values within a
+    /// `select`-type configuration option (e.g. one group per provider
+    /// backing a merged model selector).
+    type session-config-group-id = string;
+
     /// Semantic category for a configuration option. Clients use this to
     /// place the selector and bind shortcuts; it MUST NOT be required for
     /// correctness, and clients MUST handle unknown categories
@@ -225,6 +230,28 @@ interface sessions {
         description: option<string>,
     }
 
+    /// A labelled group of selectable values, rendered under a header.
+    /// Used e.g. to group models by the provider that offers them.
+    record session-config-select-group {
+        /// Stable identifier for this group.
+        group: session-config-group-id,
+        /// Human-readable group label (header).
+        name: string,
+        /// The selectable values in this group.
+        options: list<session-config-select-option>,
+    }
+
+    /// The selectable values of a `select`-type configuration option:
+    /// either a flat (ungrouped) list or a list of labelled groups.
+    /// Values MUST be unique across all groups — selection round-trips by
+    /// value id alone (no group id).
+    variant session-config-select-options {
+        /// A flat list of values with no grouping.
+        ungrouped(list<session-config-select-option>),
+        /// A list of values grouped under headers.
+        grouped(list<session-config-select-group>),
+    }
+
     /// A single-value selector (dropdown) configuration option and its
     /// current state.
     record session-config-option {
@@ -238,8 +265,8 @@ interface sessions {
         category: option<session-config-option-category>,
         /// The currently selected value. MUST be one of `options`.
         current-value: session-config-value-id,
-        /// The selectable values.
-        options: list<session-config-select-option>,
+        /// The selectable values (flat or grouped).
+        options: session-config-select-options,
         /// Which component contributed this option. Providers set it to
         /// their own component id; layers pass downstream entries through
         /// unchanged.
