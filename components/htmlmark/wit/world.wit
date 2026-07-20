@@ -1,0 +1,10 @@
+package components:htmlmark;
+
+interface htmlmark {
+    extract: func(input: string) -> result<string, string>;
+    render: func(md: string) -> result<string, string>;
+}
+
+world htmlmark-world {
+    export htmlmark;
+}

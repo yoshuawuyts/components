@@ -1,0 +1,14 @@
+[package]
+name = "htmlmark"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+html2md = "0.2"
+readability = "0.2"
+pulldown-cmark = "0.9"
+url = "2"
+wit-bindgen = "0.21"
