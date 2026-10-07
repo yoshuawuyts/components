@@ -1,0 +1,465 @@
+package yoshuawuyts:slidedeck@0.1.0;
+
+/// Types describing a presentation.
+///
+/// All positions and sizes are in inches. Every slide is 16:9 widescreen,
+/// 13.333 inches wide and 7.5 inches tall, with the origin in the top-left
+/// corner. Font sizes are in points.
+interface types {
+    /// A color written as a 6-digit hexadecimal sRGB string: `"RRGGBB"` or
+    /// `"#RRGGBB"`.
+    type color = string;
+
+    /// A built-in color palette and font pairing.
+    enum theme {
+        /// Dark navy with blue accents. Good for executive presentations.
+        corporate-blue,
+        /// GitHub-style dark mode. Good for technical talks.
+        dark-gradient,
+        /// White background with indigo accents. Good for documents and reports.
+        light-clean,
+        /// Deep teal with green accents.
+        emerald,
+        /// Dark red with warm orange and gold accents.
+        sunset,
+        /// Pure black. Minimal and high-contrast.
+        black,
+        /// Near-black with bold red accents.
+        brutalist,
+    }
+
+    /// The animation used when advancing to a slide.
+    enum transition {
+        fade,
+        push,
+        wipe,
+        split,
+        cover,
+        dissolve,
+        zoom,
+    }
+
+    /// Horizontal text alignment.
+    enum text-align {
+        left,
+        center,
+        right,
+        justify,
+    }
+
+    /// Vertical text alignment within a shape.
+    enum vertical-align {
+        top,
+        middle,
+        bottom,
+    }
+
+    /// A rectangle on the slide, in inches.
+    record frame {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    }
+
+    /// A linear gradient between two colors.
+    record gradient {
+        start: color,
+        end: color,
+        /// Direction in degrees: 0 is left-to-right, 90 is top-to-bottom.
+        angle: f32,
+    }
+
+    /// A slide background.
+    variant background {
+        solid(color),
+        gradient(gradient),
+    }
+
+    /// Text formatting. Unset fields fall back to theme defaults.
+    record text-style {
+        /// Font size in points.
+        font-size: option<f32>,
+        /// Text color. When unset a readable color is picked automatically.
+        color: option<color>,
+        bold: bool,
+        italic: bool,
+        font-family: option<string>,
+        align: option<text-align>,
+    }
+
+    /// A box of text. Each entry in `paragraphs` becomes its own paragraph;
+    /// newlines inside an entry become line breaks.
+    record text-box {
+        frame: frame,
+        paragraphs: list<string>,
+        style: text-style,
+        fill: option<color>,
+        vertical-align: option<vertical-align>,
+    }
+
+    /// The outline of a geometric shape.
+    enum geometry {
+        rectangle,
+        rounded-rectangle,
+        ellipse,
+        triangle,
+        diamond,
+        hexagon,
+        chevron,
+        right-arrow,
+    }
+
+    /// A shape outline.
+    record border {
+        color: color,
+        /// Width in points.
+        width: f32,
+    }
+
+    /// A filled geometric shape, optionally with centered text inside.
+    record shape-box {
+        frame: frame,
+        geometry: geometry,
+        /// Fill color. Defaults to the theme's primary accent.
+        fill: option<color>,
+        /// Fill opacity in [0.0, 1.0]. Defaults to fully opaque.
+        opacity: option<f32>,
+        border: option<border>,
+        text: option<string>,
+        style: text-style,
+    }
+
+    /// The stroke pattern of a line.
+    enum dash {
+        solid,
+        dash,
+        dot,
+        dash-dot,
+    }
+
+    /// Where to draw arrowheads on a line.
+    enum arrowheads {
+        none,
+        end,
+        both,
+    }
+
+    /// A straight line from (`x1`, `y1`) to (`x2`, `y2`), in inches.
+    record connector {
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        /// Defaults to the theme's subtle color.
+        color: option<color>,
+        /// Width in points. Defaults to 1.5.
+        width: option<f32>,
+        dash: dash,
+        arrowheads: arrowheads,
+    }
+
+    /// A bulleted or numbered list.
+    record list-box {
+        frame: frame,
+        items: list<string>,
+        numbered: bool,
+        style: text-style,
+        bullet-color: option<color>,
+    }
+
+    /// How an image is scaled into its frame.
+    enum image-fit {
+        /// Stretch to fill the frame, ignoring the aspect ratio.
+        stretch,
+        /// Scale to fit inside the frame, preserving the aspect ratio.
+        contain,
+        /// Scale to cover the frame, cropping the excess.
+        cover,
+    }
+
+    /// An embedded raster image. PNG, JPEG, and GIF are supported; the format
+    /// is detected from the image bytes.
+    record picture {
+        frame: frame,
+        data: list<u8>,
+        fit: image-fit,
+        /// Alternative text for accessibility.
+        description: option<string>,
+    }
+
+    /// A table with a header row. Every row must have as many cells as there
+    /// are headers. Rows share the frame's height equally.
+    record table {
+        frame: frame,
+        headers: list<string>,
+        rows: list<list<string>>,
+        /// Header row fill. Defaults to the theme's primary accent.
+        header-fill: option<color>,
+        /// Body font size in points. Defaults to 14.
+        font-size: option<f32>,
+    }
+
+    /// A named list of values, one per chart category.
+    record series {
+        name: string,
+        values: list<f64>,
+        /// Defaults to the theme's accent palette.
+        color: option<color>,
+    }
+
+    /// A bar (horizontal) or column (vertical) chart.
+    record bar-chart {
+        title: option<string>,
+        categories: list<string>,
+        series: list<series>,
+        horizontal: bool,
+        stacked: bool,
+        show-values: bool,
+        show-legend: bool,
+    }
+
+    /// A line chart, optionally filled as an area chart.
+    record line-chart {
+        title: option<string>,
+        categories: list<string>,
+        series: list<series>,
+        smooth: bool,
+        area: bool,
+        show-values: bool,
+        show-legend: bool,
+    }
+
+    /// A pie or doughnut chart.
+    record pie-chart {
+        title: option<string>,
+        labels: list<string>,
+        values: list<f64>,
+        /// Per-slice colors. Defaults to the theme's accent palette.
+        colors: list<color>,
+        donut: bool,
+        show-percent: bool,
+        show-legend: bool,
+    }
+
+    /// A native, editable PowerPoint chart.
+    variant chart {
+        bar(bar-chart),
+        line(line-chart),
+        pie(pie-chart),
+    }
+
+    /// A chart placed on a slide.
+    record chart-box {
+        frame: frame,
+        chart: chart,
+    }
+
+    /// Monospaced code on a dark panel.
+    record code-block {
+        frame: frame,
+        code: string,
+        /// Font size in points. Defaults to 14.
+        font-size: option<f32>,
+        line-numbers: bool,
+    }
+
+    /// A large value with a smaller label underneath, such as `"99.9%"` over
+    /// `"Uptime"`.
+    record stat-box {
+        frame: frame,
+        value: string,
+        label: string,
+        fill: option<color>,
+    }
+
+    /// A single element on a slide.
+    variant shape {
+        text(text-box),
+        shape(shape-box),
+        line(connector),
+        %list(list-box),
+        picture(picture),
+        table(table),
+        chart(chart-box),
+        code(code-block),
+        stat(stat-box),
+    }
+
+    /// A cover slide with a large centered title.
+    record title-layout {
+        title: string,
+        subtitle: option<string>,
+    }
+
+    /// A section divider on an accent-colored background.
+    record section-layout {
+        title: string,
+        subtitle: option<string>,
+    }
+
+    /// A titled slide with free-form paragraphs of body text.
+    record text-layout {
+        title: string,
+        paragraphs: list<string>,
+    }
+
+    /// A titled slide with a bulleted list.
+    record bullets-layout {
+        title: string,
+        items: list<string>,
+    }
+
+    /// A titled slide with two bulleted columns.
+    record columns-layout {
+        title: string,
+        left: list<string>,
+        right: list<string>,
+    }
+
+    /// A titled slide comparing two headed columns side by side.
+    record comparison-layout {
+        title: string,
+        left-heading: string,
+        left: list<string>,
+        right-heading: string,
+        right: list<string>,
+    }
+
+    /// A large pull quote with optional attribution.
+    record quote-layout {
+        quote: string,
+        author: option<string>,
+        role: option<string>,
+    }
+
+    /// One dramatic number, such as `"2.6"` `"SECONDS"`.
+    record big-number-layout {
+        number: string,
+        unit: option<string>,
+        label: option<string>,
+    }
+
+    /// A value and its label.
+    record stat {
+        value: string,
+        label: string,
+    }
+
+    /// A row of one to four key metrics.
+    record stats-layout {
+        title: option<string>,
+        stats: list<stat>,
+    }
+
+    /// A titled slide with a chart filling the body.
+    record chart-layout {
+        title: string,
+        chart: chart,
+    }
+
+    /// A titled slide with a table filling the body.
+    record table-layout {
+        title: string,
+        headers: list<string>,
+        rows: list<list<string>>,
+    }
+
+    /// A slide showing a single image, scaled to fit.
+    record image-layout {
+        title: option<string>,
+        data: list<u8>,
+        caption: option<string>,
+    }
+
+    /// A titled slide with a code block filling the body.
+    record code-layout {
+        title: string,
+        code: string,
+    }
+
+    /// One step in a process.
+    record step {
+        label: string,
+        description: option<string>,
+    }
+
+    /// A left-to-right flow of two to six steps joined by arrows.
+    record process-layout {
+        title: string,
+        steps: list<step>,
+    }
+
+    /// The template a slide is built from.
+    variant layout {
+        title(title-layout),
+        section(section-layout),
+        text(text-layout),
+        bullets(bullets-layout),
+        columns(columns-layout),
+        comparison(comparison-layout),
+        quote(quote-layout),
+        big-number(big-number-layout),
+        stats(stats-layout),
+        chart(chart-layout),
+        table(table-layout),
+        image(image-layout),
+        code(code-layout),
+        process(process-layout),
+        /// An empty slide; populate it through `slide.shapes`.
+        blank,
+    }
+
+    /// A single slide.
+    record slide {
+        layout: layout,
+        /// Extra shapes drawn on top of the layout, in order.
+        shapes: list<shape>,
+        /// Speaker notes.
+        notes: option<string>,
+        /// Overrides the layout's default background.
+        background: option<background>,
+        transition: option<transition>,
+    }
+
+    /// A complete presentation.
+    record deck {
+        theme: theme,
+        /// Document title, stored in the file's metadata.
+        title: option<string>,
+        /// Document author, stored in the file's metadata.
+        author: option<string>,
+        slides: list<slide>,
+        /// Draw the slide number in the bottom-right corner of every slide.
+        slide-numbers: bool,
+        /// Text drawn in the bottom-left corner of every slide.
+        footer: option<string>,
+    }
+}
+
+/// Generate PowerPoint (`.pptx`) presentations.
+interface presentation {
+    use types.{deck, theme};
+
+    /// Render a deck to the bytes of a `.pptx` file.
+    ///
+    /// Returns an error describing the first invalid input found, such as a
+    /// malformed color, a shape that falls off the slide, or a chart series
+    /// whose length doesn't match its categories.
+    generate: func(deck: deck) -> result<list<u8>, string>;
+
+    /// Render a Markdown document to the bytes of a `.pptx` file.
+    ///
+    /// Slides are separated by thematic breaks (`---`) or by headings. A
+    /// leading `#` heading becomes a title slide, later `#` headings become
+    /// section slides, and `##` headings title content slides. Lists,
+    /// paragraphs, block quotes, fenced code, and tables pick the matching
+    /// layout. HTML comments (`<!-- ... -->`) become speaker notes.
+    from-markdown: func(markdown: string, theme: theme) -> result<list<u8>, string>;
+}
+
+/// Implemented by any component that generates presentations.
+world slidedeck {
+    export types;
+    export presentation;
+}

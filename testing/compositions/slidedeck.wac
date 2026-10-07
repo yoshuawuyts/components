@@ -1,0 +1,31 @@
+// Composition for the `slidedeck` component test suite.
+//
+// Wires three Wasm components into a single runnable component:
+//   * `yosh:slidedeck`        - the component under test (CUT)
+//   * `yosh:slidedeck-tests`  - the test suite (exports `wasi:test/tests`)
+//   * `yosh:test-runner`      - the generic runner (exports `wasi:cli/run`)
+//
+// The CUT exports the named `types` and `presentation` interfaces. The suite
+// imports `presentation`, which in turn uses `types`, so both are wired by
+// interface identity. `...` lets every remaining import flow up to the
+// composed component, where wasmtime satisfies the WASI interfaces at run time.
+//
+// The package names below are bound to built `.wasm` files via
+// `wac compose --dep <name>=<path>`; see the `test-component` recipe in the repo
+// `justfile`.
+package yosh:slidedeck-test;
+
+let cut = new yosh:slidedeck { ... };
+
+let suite = new yosh:slidedeck-tests {
+    "yoshuawuyts:slidedeck/types@0.1.0": cut["yoshuawuyts:slidedeck/types@0.1.0"],
+    "yoshuawuyts:slidedeck/presentation@0.1.0": cut["yoshuawuyts:slidedeck/presentation@0.1.0"],
+    ...
+};
+
+let runner = new yosh:test-runner {
+    "wasi:test/tests": suite["wasi:test/tests"],
+    ...
+};
+
+export runner["wasi:cli/run@0.2.0"];

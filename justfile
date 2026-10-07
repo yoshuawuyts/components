@@ -9,6 +9,7 @@ build:
     cargo build -p tablemark --target wasm32-wasip2 {{cargo-profile}}
     cargo build -p textsearch --target wasm32-wasip2 {{cargo-profile}}
     cargo build -p color --target wasm32-wasip2 {{cargo-profile}}
+    cargo build -p slidedeck --target wasm32-wasip2 {{cargo-profile}}
 
 # Build all interface-type WIT packages into .wasm files under target/wit/.
 # Output: target/wit/<name>.wasm
@@ -19,7 +20,7 @@ build-wit:
 
 # Trigger the `Publish Component` workflow on CI for a single target at the
 # given version, then watch the resulting run until it completes.
-# `target` must be one of: wordmark, tablemark, textsearch, color, docs, acp.
+# `target` must be one of: wordmark, tablemark, textsearch, color, slidedeck, docs, acp.
 # Example: `just publish wordmark 1.2.0`
 publish target version:
     gh workflow run publish.yml --field target={{target}} --field version={{version}}
@@ -40,7 +41,7 @@ build-test-infra:
     cd testing && cargo build --release --target wasm32-wasip2
 
 # Build, compose, and run the test suite for a single component.
-# `name` must be one of: textsearch, wordmark, tablemark, color.
+# `name` must be one of: textsearch, wordmark, tablemark, color, slidedeck.
 # Always (re)builds the component-under-test and the harness first so the
 # composed artifact never goes stale.
 test-component name: build-test-infra
@@ -55,13 +56,13 @@ test-component name: build-test-infra
     wasmtime run -Wcomponent-model-async target/test/{{name}}-test.wasm
 
 # Build, compose, and run every component's test suite.
-test-components: (test-component "textsearch") (test-component "wordmark") (test-component "tablemark") (test-component "color")
+test-components: (test-component "textsearch") (test-component "wordmark") (test-component "tablemark") (test-component "color") (test-component "slidedeck")
 
 # Show the latest semver tag published to GHCR for each package.
 # Skips non-semver tags (e.g. `latest`). Prints `<package>: <version>` per line,
 # or `<package>: -` if no semver tag has been published yet.
 versions:
-    @for pkg in wordmark tablemark textsearch docs acp color; do \
+    @for pkg in wordmark tablemark textsearch docs acp color slidedeck; do \
         latest=$(gh api -H "Accept: application/vnd.github+json" \
             "/users/yoshuawuyts/packages/container/components%2F$pkg/versions" \
             --jq '[.[].metadata.container.tags[]? | select(test("^v?[0-9]+\\.[0-9]+\\.[0-9]+([-+].*)?$"))] | unique | .[]' 2>/dev/null \
