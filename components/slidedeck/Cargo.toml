@@ -1,0 +1,30 @@
+[package]
+name = "slidedeck"
+license = "Apache-2.0"
+repository = "https://github.com/yoshuawuyts/components"
+documentation = "https://docs.rs/slidedeck"
+description = "Wasm Components"
+readme = "README.md"
+edition = "2021"
+keywords = []
+categories = []
+authors = ["Yoshua Wuyts <rust@yosh.is>"]
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+
+[dependencies]
+wit-bindgen = "0.36"
+pulldown-cmark = { version = "0.12", default-features = false }
+miniz_oxide = "0.8"
+crc32fast = "1"
+
+[dev-dependencies]
+zip = { version = "2", default-features = false, features = ["deflate"] }
+quick-xml = "0.37"
+
+[lints]
+workspace = true
