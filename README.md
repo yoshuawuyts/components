@@ -14,7 +14,7 @@
 | `textsearch` | Regex find/replace over text, powered by `ripgrep`'s engine |
 | `color`      | Convert between CSS color spaces (sRGB, HSL, HWB, Lab, LCH, Oklab, Oklch, Okhsl) |
 | `slidedeck`  | Generate PowerPoint (`.pptx`) presentations from slide descriptions or Markdown |
-| `git`       | Self-contained local Git client for agents: read repositories and commit explicit changes to bare repositories |
+| `git`       | Self-contained Git client for agents: local reads/writes, merge/rebase, patches/blame, and bounded smart HTTP clone/fetch/push |
 
 ## Interfaces
 

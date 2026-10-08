@@ -1,12 +1,12 @@
 use crate::{
     CloneResult, Component, Error, FetchResult, Guest, NetworkCredentials, NetworkError,
-    NetworkOptions, Reference, branch_name, open_bare, repository_error, update_branch,
-    validate_repository_path,
+    NetworkOptions, PushOptions, PushResult, Reference, branch_name, branch_tip, is_ancestor, open,
+    open_bare, repository_error, update_branch, validate_repository_path,
 };
 use gix::bstr::ByteSlice;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::Cursor,
+    io::{Cursor, Write},
     path::Path,
     sync::atomic::AtomicBool,
 };
@@ -51,6 +51,7 @@ struct Advertisement {
     head_oid: Option<gix::ObjectId>,
     side_band_64k: bool,
     ofs_delta: bool,
+    capabilities: BTreeSet<String>,
 }
 
 fn network_error(error: NetworkError) -> Error {
@@ -376,10 +377,15 @@ fn http_request(url: &HttpUrl, spec: HttpRequest<'_>) -> Result<(u16, String, Ve
     outgoing_request
         .set_path_with_query(Some(spec.endpoint))
         .map_err(|()| transport_error())?;
-    if let Some(body) = spec.body {
-        let outgoing_body = outgoing_request.body().map_err(|()| transport_error())?;
+    let outgoing_body = spec
+        .body
+        .map(|_| outgoing_request.body().map_err(|()| transport_error()))
+        .transpose()?;
+    // Start the request before streaming its body so host backpressure can drain it.
+    let future = outgoing_handler::handle(outgoing_request, None).map_err(|_| transport_error())?;
+    if let (Some(body), Some(outgoing_body)) = (spec.body, outgoing_body) {
         let stream = outgoing_body.write().map_err(|()| transport_error())?;
-        for chunk in body.chunks(64 * 1024) {
+        for chunk in body.chunks(4096) {
             stream
                 .blocking_write_and_flush(chunk)
                 .map_err(|_| transport_error())?;
@@ -387,7 +393,6 @@ fn http_request(url: &HttpUrl, spec: HttpRequest<'_>) -> Result<(u16, String, Ve
         drop(stream);
         OutgoingBody::finish(outgoing_body, None).map_err(|_| transport_error())?;
     }
-    let future = outgoing_handler::handle(outgoing_request, None).map_err(|_| transport_error())?;
     let pollable = future.subscribe();
     pollable.block();
     drop(pollable);
@@ -508,6 +513,14 @@ fn visit_packets(
 }
 
 fn parse_advertisement(input: &[u8], max_refs: u32) -> Result<Advertisement, Error> {
+    parse_service_advertisement(input, max_refs, false)
+}
+
+fn parse_service_advertisement(
+    input: &[u8],
+    max_refs: u32,
+    receive: bool,
+) -> Result<Advertisement, Error> {
     let mut service = false;
     let mut service_flush = false;
     let mut refs = BTreeMap::new();
@@ -522,8 +535,13 @@ fn parse_advertisement(input: &[u8], max_refs: u32) -> Result<Advertisement, Err
         }
         match packet {
             Packet::Data(data) if !service => {
-                if data != b"# service=git-upload-pack\n" {
-                    return Err(malformed("invalid upload-pack service announcement"));
+                let expected: &[u8] = if receive {
+                    b"# service=git-receive-pack\n"
+                } else {
+                    b"# service=git-upload-pack\n"
+                };
+                if data != expected {
+                    return Err(malformed("invalid smart-HTTP service announcement"));
                 }
                 service = true;
             }
@@ -613,7 +631,7 @@ fn parse_advertisement(input: &[u8], max_refs: u32) -> Result<Advertisement, Err
         }
         Ok(())
     })?;
-    if !service || !service_flush {
+    if !service || !service_flush || !finished {
         return Err(malformed("incomplete service advertisement"));
     }
     if let Some(target) = caps
@@ -628,7 +646,7 @@ fn parse_advertisement(input: &[u8], max_refs: u32) -> Result<Advertisement, Err
         head = Some(target);
     }
     let side_band_64k = caps.contains("side-band-64k");
-    if !refs.is_empty() && !side_band_64k {
+    if !receive && !refs.is_empty() && !side_band_64k {
         return Err(Error::Unsupported(
             "remote does not advertise side-band-64k".into(),
         ));
@@ -640,6 +658,7 @@ fn parse_advertisement(input: &[u8], max_refs: u32) -> Result<Advertisement, Err
         head_oid,
         side_band_64k,
         ofs_delta,
+        capabilities: caps,
     })
 }
 
@@ -1178,6 +1197,314 @@ pub(crate) fn fetch_repository(
     Ok(FetchResult { updated })
 }
 
+fn push_branch(branch: &str) -> Result<String, Error> {
+    if branch.len() > 1024
+        || branch.starts_with("refs/")
+        || branch.starts_with('+')
+        || branch.contains(':')
+    {
+        return Err(Error::InvalidInput(
+            "push requires a short branch name without refspec syntax".into(),
+        ));
+    }
+    branch_name(branch)
+}
+
+fn lease_id(value: Option<&str>) -> Result<Option<gix::ObjectId>, Error> {
+    value
+        .map(|value| {
+            if value.len() != 40 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(Error::InvalidInput(
+                    "push lease requires a full nonzero SHA-1 object ID".into(),
+                ));
+            }
+            let id = gix::ObjectId::from_hex(value.as_bytes())
+                .map_err(|_| Error::InvalidInput("invalid push lease".into()))?;
+            if id.is_null() {
+                return Err(Error::InvalidInput(
+                    "use none for an absent remote branch".into(),
+                ));
+            }
+            Ok(id)
+        })
+        .transpose()
+}
+
+struct BoundedPack {
+    bytes: Vec<u8>,
+    limit: usize,
+}
+
+impl Write for BoundedPack {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > self.limit.saturating_sub(self.bytes.len()) {
+            return Err(std::io::Error::other("push pack exceeds byte bound"));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn encode_pack(
+    repo: &gix::Repository,
+    tip: gix::ObjectId,
+    max_bytes: usize,
+    max_raw_bytes: usize,
+) -> Result<Vec<u8>, Error> {
+    let mut pending = vec![tip];
+    let mut visited = BTreeSet::new();
+    let mut pack = BoundedPack {
+        bytes: Vec::new(),
+        limit: max_bytes.saturating_sub(20),
+    };
+    pack.write_all(b"PACK\0\0\0\x02\0\0\0\0")
+        .map_err(repository_error)?;
+    let mut commits = 0;
+    let mut raw_bytes = 0usize;
+    while let Some(id) = pending.pop() {
+        if !visited.insert(id) {
+            continue;
+        }
+        if visited.len() > MAX_PACK_OBJECTS as usize {
+            return Err(Error::Unsupported("push exceeds 1000000 objects".into()));
+        }
+        let object = repo.find_object(id).map_err(repository_error)?;
+        raw_bytes = raw_bytes.saturating_add(object.data.len());
+        if raw_bytes > max_raw_bytes {
+            return Err(Error::Unsupported(
+                "push uncompressed objects exceed pack byte bound".into(),
+            ));
+        }
+        let kind = match object.kind {
+            gix::objs::Kind::Commit => {
+                commits += 1;
+                if commits > crate::MAX_HISTORY {
+                    return Err(Error::Unsupported("push exceeds 1000 commits".into()));
+                }
+                let commit = object.try_into_commit().map_err(repository_error)?;
+                let decoded = commit.decode().map_err(repository_error)?;
+                pending.push(decoded.tree());
+                pending.extend(decoded.parents());
+                1u8
+            }
+            gix::objs::Kind::Tree => {
+                let tree = object.try_into_tree().map_err(repository_error)?;
+                for entry in tree.iter() {
+                    let entry = entry.map_err(repository_error)?;
+                    // Gitlinks name a separate repository's commit, not a pack object.
+                    if !entry.mode().is_commit() {
+                        pending.push(entry.object_id());
+                    }
+                    if pending.len() > MAX_PACK_OBJECTS as usize {
+                        return Err(Error::Unsupported("push has too many tree entries".into()));
+                    }
+                }
+                2
+            }
+            gix::objs::Kind::Blob => 3,
+            gix::objs::Kind::Tag => {
+                return Err(Error::Repository(
+                    "branch closure contains a tag object".into(),
+                ));
+            }
+        };
+        let object = repo.find_object(id).map_err(repository_error)?;
+        let mut hash = gix::hash::hasher(repo.object_hash());
+        hash.update(format!("{} {}\0", object.kind, object.data.len()).as_bytes());
+        hash.update(&object.data);
+        let actual = hash.try_finalize().map_err(repository_error)?;
+        id.verify(&actual).map_err(repository_error)?;
+        let mut size = object.data.len();
+        let mut byte = (kind << 4) | u8::try_from(size & 15).map_err(repository_error)?;
+        size >>= 4;
+        loop {
+            if size != 0 {
+                byte |= 128;
+            }
+            pack.write_all(&[byte]).map_err(repository_error)?;
+            if size == 0 {
+                break;
+            }
+            byte = u8::try_from(size & 127).map_err(repository_error)?;
+            size >>= 7;
+        }
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(&mut pack, flate2::Compression::default());
+        encoder.write_all(&object.data).map_err(repository_error)?;
+        encoder.finish().map_err(repository_error)?;
+    }
+    let count = u32::try_from(visited.len()).map_err(repository_error)?;
+    pack.bytes
+        .get_mut(8..12)
+        .ok_or_else(|| Error::Repository("missing push pack header".into()))?
+        .copy_from_slice(&count.to_be_bytes());
+    let mut hash = gix::hash::hasher(repo.object_hash());
+    hash.update(&pack.bytes);
+    let checksum = hash.try_finalize().map_err(repository_error)?;
+    pack.bytes.extend_from_slice(checksum.as_slice());
+    if pack.bytes.len() > max_bytes {
+        return Err(Error::Unsupported("push pack exceeds byte bound".into()));
+    }
+    Ok(pack.bytes)
+}
+
+fn receive_status(input: &[u8], target: &str) -> Result<bool, Error> {
+    let mut unpack = None;
+    let mut status = None;
+    let mut finished = false;
+    visit_packets(input, |packet| {
+        if finished {
+            return Err(malformed("data follows receive-pack report"));
+        }
+        match packet {
+            Packet::Data(data) if unpack.is_none() => {
+                let data = data.strip_suffix(b"\n").unwrap_or(data);
+                if !data.starts_with(b"unpack ") {
+                    return Err(malformed("missing receive-pack unpack status"));
+                }
+                unpack = Some(data == b"unpack ok");
+            }
+            Packet::Data(data) if status.is_none() => {
+                let data = data.strip_suffix(b"\n").unwrap_or(data);
+                if data == format!("ok {target}").as_bytes() {
+                    status = Some(true);
+                } else if data.starts_with(format!("ng {target} ").as_bytes()) {
+                    status = Some(false);
+                } else {
+                    return Err(malformed("unexpected receive-pack ref status"));
+                }
+            }
+            Packet::Flush if unpack.is_some() && status.is_some() => finished = true,
+            _ => return Err(malformed("invalid receive-pack report framing")),
+        }
+        Ok(())
+    })?;
+    if !finished {
+        return Err(malformed("incomplete receive-pack report"));
+    }
+    if unpack == Some(false) && status == Some(true) {
+        return Err(malformed("inconsistent receive-pack unpack and ref status"));
+    }
+    Ok(unpack == Some(true) && status == Some(true))
+}
+
+pub(crate) fn push_repository(
+    path: &str,
+    remote_url: &str,
+    options: &PushOptions,
+) -> Result<PushResult, Error> {
+    let source = push_branch(&options.source_branch)?;
+    let target = push_branch(&options.target_branch)?;
+    let expected = lease_id(options.expected_tip.as_deref())?;
+    if options.force && expected.is_none() {
+        return Err(Error::InvalidInput(
+            "force push requires an existing-tip lease".into(),
+        ));
+    }
+    if !(1..=MAX_RESPONSE).contains(&options.max_request_bytes) {
+        return Err(Error::InvalidInput(
+            "push request limit must be 1..=268435456 bytes".into(),
+        ));
+    }
+    let url = parse_url(remote_url)?;
+    let network = &options.network;
+    let max_response = validate_options(network, &url)?;
+    let repo = open(path)?;
+    let tip = branch_tip(&repo, &source)?;
+    let discovery = endpoint(&url, "info/refs?service=git-receive-pack");
+    let (_, content_type, body) = http_request(
+        &url,
+        HttpRequest {
+            endpoint: &discovery,
+            method: &Method::Get,
+            accept: "application/x-git-receive-pack-advertisement",
+            content_type: None,
+            credentials: network.credentials.as_ref(),
+            body: None,
+            max_bytes: max_response,
+        },
+    )?;
+    check_content_type(
+        &content_type,
+        "application/x-git-receive-pack-advertisement",
+    )?;
+    let advertisement = parse_service_advertisement(&body, network.max_refs, true)?;
+    if advertisement
+        .capabilities
+        .iter()
+        .any(|cap| cap.starts_with("object-format=") && cap != "object-format=sha1")
+    {
+        return Err(Error::Unsupported("remote does not use SHA-1".into()));
+    }
+    let observed = advertisement.refs.get(&target).copied();
+    if observed != expected {
+        return Ok(PushResult::Stale(observed.map(|id| id.to_string())));
+    }
+    let reference = Reference {
+        name: target.clone(),
+        id: tip.to_string(),
+    };
+    if observed == Some(tip) {
+        return Ok(PushResult::UpToDate(reference));
+    }
+    if let Some(old) = observed
+        && !options.force
+        && !is_ancestor(&repo, old, tip)?
+    {
+        return Ok(PushResult::NonFastForward(Reference {
+            name: target,
+            id: old.to_string(),
+        }));
+    }
+    if !advertisement.capabilities.contains("report-status") {
+        return Err(Error::Unsupported(
+            "remote lacks report-status capability".into(),
+        ));
+    }
+    let old = observed.unwrap_or_else(|| gix::ObjectId::null(gix::hash::Kind::Sha1));
+    let atomic = if advertisement.capabilities.contains("atomic") {
+        " atomic"
+    } else {
+        ""
+    };
+    let mut request = Vec::new();
+    pkt_line(
+        format!("{old} {tip} {target}\0report-status{atomic}\n").as_bytes(),
+        &mut request,
+    )?;
+    request.extend_from_slice(b"0000");
+    let max_request = usize::try_from(options.max_request_bytes).map_err(repository_error)?;
+    let remaining = max_request
+        .checked_sub(request.len())
+        .ok_or_else(|| Error::InvalidInput("push request exceeds byte bound".into()))?;
+    let max_pack = usize::try_from(network.max_pack_bytes).map_err(repository_error)?;
+    let pack = encode_pack(&repo, tip, max_pack.min(remaining), max_pack)?;
+    request.extend_from_slice(&pack);
+    let endpoint = endpoint(&url, "git-receive-pack");
+    let (_, content_type, body) = http_request(
+        &url,
+        HttpRequest {
+            endpoint: &endpoint,
+            method: &Method::Post,
+            accept: "application/x-git-receive-pack-result",
+            content_type: Some("application/x-git-receive-pack-request"),
+            credentials: network.credentials.as_ref(),
+            body: Some(&request),
+            max_bytes: max_response,
+        },
+    )?;
+    check_content_type(&content_type, "application/x-git-receive-pack-result")?;
+    if receive_status(&body, &target)? {
+        Ok(PushResult::Pushed(reference))
+    } else {
+        Ok(PushResult::Rejected)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1265,5 +1592,168 @@ mod tests {
         data.extend_from_slice(b"0000");
         assert_eq!(unpack_sideband(&data, 32).unwrap(), pack);
         assert!(unpack_sideband(&data, 31).is_err());
+    }
+
+    #[test]
+    fn push_names_leases_and_api_bounds_are_explicit() {
+        for invalid in [
+            "",
+            "refs/heads/main",
+            "main:target",
+            "+main",
+            "../main",
+            "a.lock",
+        ] {
+            assert!(push_branch(invalid).is_err(), "{invalid}");
+        }
+        assert_eq!(
+            push_branch("feature/nested").unwrap(),
+            "refs/heads/feature/nested"
+        );
+        assert!(lease_id(None).unwrap().is_none());
+        for invalid in ["HEAD", "1234", "0000000000000000000000000000000000000000"] {
+            assert!(lease_id(Some(invalid)).is_err());
+        }
+        let mut options = PushOptions {
+            source_branch: "main".into(),
+            target_branch: "main".into(),
+            expected_tip: None,
+            force: true,
+            max_request_bytes: 1024,
+            network: options("localhost"),
+        };
+        assert!(matches!(
+            Component::push(
+                "/not-used".into(),
+                "http://localhost/repo".into(),
+                options.clone()
+            ),
+            Err(Error::InvalidInput(_))
+        ));
+        options.force = false;
+        options.max_request_bytes = 0;
+        assert!(matches!(
+            Component::push("/not-used".into(), "http://localhost/repo".into(), options),
+            Err(Error::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn receive_advertisement_requires_complete_correct_service() {
+        let mut data = Vec::new();
+        packet(b"# service=git-receive-pack\n", &mut data);
+        data.extend_from_slice(b"0000");
+        packet(
+            b"0000000000000000000000000000000000000000 capabilities^{}\0report-status atomic\n",
+            &mut data,
+        );
+        data.extend_from_slice(b"0000");
+        let parsed = parse_service_advertisement(&data, 10, true).unwrap();
+        assert!(parsed.refs.is_empty());
+        assert!(parsed.capabilities.contains("report-status"));
+        assert!(parsed.capabilities.contains("atomic"));
+        assert!(parse_advertisement(&data, 10).is_err());
+        data.truncate(data.len() - 4);
+        assert!(parse_service_advertisement(&data, 10, true).is_err());
+    }
+
+    #[test]
+    fn receive_report_never_infers_success_and_redacts_server_text() {
+        let report = |lines: &[&[u8]], flush: bool| {
+            let mut bytes = Vec::new();
+            for line in lines {
+                packet(line, &mut bytes);
+            }
+            if flush {
+                bytes.extend_from_slice(b"0000");
+            }
+            bytes
+        };
+        let success = report(&[b"unpack ok\n", b"ok refs/heads/main\n"], true);
+        assert!(receive_status(&success, "refs/heads/main").unwrap());
+        for lines in [
+            vec![b"unpack ok\n".as_slice(), b"ng refs/heads/main SECRET\n"],
+            vec![
+                b"unpack SECRET\n".as_slice(),
+                b"ng refs/heads/main SECRET\n",
+            ],
+        ] {
+            assert!(!receive_status(&report(&lines, true), "refs/heads/main").unwrap());
+        }
+        for bytes in [
+            Vec::new(),
+            b"0000".to_vec(),
+            report(&[b"unpack ok\n"], true),
+            report(&[b"unpack ok\n", b"ok refs/heads/main\n"], false),
+            report(&[b"unpack failed\n", b"ok refs/heads/main\n"], true),
+            report(&[b"unpack ok\n", b"ok refs/heads/wrong\n"], true),
+            report(
+                &[
+                    b"unpack ok\n",
+                    b"ok refs/heads/main\n",
+                    b"ok refs/heads/main\n",
+                ],
+                true,
+            ),
+            report(&[b"ERR SECRET\n"], true),
+            [success.as_slice(), b"0000"].concat(),
+        ] {
+            let error = receive_status(&bytes, "refs/heads/main").unwrap_err();
+            assert!(!format!("{error:?}").contains("SECRET"));
+        }
+    }
+
+    #[test]
+    fn encoded_pack_roundtrips_complete_closure_and_enforces_exact_bound() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory
+            .path()
+            .join("source.git")
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let destination = directory
+            .path()
+            .join("destination.git")
+            .to_str()
+            .unwrap()
+            .to_owned();
+        Component::init(source.clone(), "main".into()).unwrap();
+        Component::init(destination.clone(), "main".into()).unwrap();
+        let tip = Component::commit_files(
+            source.clone(),
+            "main".into(),
+            None,
+            vec![crate::Change {
+                path: "nested/file".into(),
+                contents: Some(b"hello\0binary\n".to_vec()),
+                mode: crate::FileMode::Regular,
+            }],
+            crate::Signature {
+                name: "Agent".into(),
+                email: "agent@example.invalid".into(),
+                seconds: 1_700_000_000,
+                offset: 0,
+            },
+            "initial".into(),
+        )
+        .unwrap();
+        let id = gix::ObjectId::from_hex(tip.as_bytes()).unwrap();
+        let repo = open_bare(&source).unwrap();
+        let pack = encode_pack(&repo, id, 1024 * 1024, 1024 * 1024).unwrap();
+        assert_eq!(
+            encode_pack(&repo, id, pack.len(), 1024 * 1024).unwrap(),
+            pack
+        );
+        assert!(encode_pack(&repo, id, pack.len() - 1, 1024 * 1024).is_err());
+        assert!(encode_pack(&repo, id, 20, 1024 * 1024).is_err());
+        assert!(encode_pack(&repo, id, 1024 * 1024, 1).is_err());
+        let other = open_bare(&destination).unwrap();
+        install_pack(&other, &pack).unwrap();
+        update_branch(&other, "refs/heads/main", id, None).unwrap();
+        assert_eq!(
+            Component::read_file(destination, tip, "nested/file".into()).unwrap(),
+            b"hello\0binary\n"
+        );
     }
 }

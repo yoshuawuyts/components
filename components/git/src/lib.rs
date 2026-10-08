@@ -23,8 +23,8 @@ wit_bindgen::generate!({
 use exports::yoshuawuyts::git::repository::{
     BlameLine, BlameOptions, Change, ChangeKind, CloneResult, CommitRecord, Difference, Entry,
     Error, FetchResult, FileDifference, FileMode, FilePatch, FileStatus, Guest, MergeConflict,
-    MergeResult, NetworkCredentials, NetworkError, NetworkOptions, PatchOptions, RebaseConflict,
-    RebaseResult, RebaseSuccess, Reference, Signature,
+    MergeResult, NetworkCredentials, NetworkError, NetworkOptions, PatchOptions, PushOptions,
+    PushResult, RebaseConflict, RebaseResult, RebaseSuccess, Reference, Signature,
 };
 use gix::bstr::ByteSlice;
 use std::collections::{BTreeMap, BTreeSet};
@@ -45,6 +45,9 @@ pub struct Component;
 export!(Component);
 
 impl Guest for Component {
+    fn push(path: String, url: String, options: PushOptions) -> Result<PushResult, Error> {
+        network::push_repository(&path, &url, &options)
+    }
     fn clone(
         path: String,
         url: String,
