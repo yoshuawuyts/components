@@ -6,8 +6,8 @@ WebAssembly component. Git objects, trees, commits, revision parsing and
 packfile decoding run **inside Wasm**. There is no host Git executable,
 subprocess import, libgit2, shell, or custom host service.
 
-This first version is a **local, bare-repository client**, not a complete
-replacement for the Git CLI. It supports SHA-1 repositories:
+This version is a **local Git client**, not a complete replacement for the Git
+CLI. It supports SHA-1 bare and working repositories:
 
 | Operation | Behavior |
 | --- | --- |
@@ -20,17 +20,24 @@ replacement for the Git CLI. It supports SHA-1 repositories:
 | `diff` | Compare two trees by path, object ID and file mode |
 | `create-branch` | Create a branch without replacing an existing ref |
 | `commit-files` | Commit explicit additions, replacements and deletions with optimistic concurrency |
+| `checkout` | Switch a working repository to a branch or commit |
+| `status` | Report staged, unstaged, and non-ignored untracked paths |
+| `add` / `remove` / `reset` | Update the working repository's index |
+| `commit` | Commit the index and compare-and-swap the checked-out branch |
 
 Reads support loose and packed objects, packed references, ordinary working
-repositories and bare repositories. Both mutation operations require a **bare
-repository**: we do not bypass a working repository's index or silently leave
-its working tree inconsistent.
+repositories and bare repositories. `commit-files` and `create-branch` are
+bare-repository operations; working-tree operations require a non-bare
+repository. Working-tree commits use the index and update only the checked-out
+local branch, with an expected-parent compare-and-swap.
 
-**Not implemented:** network clone/fetch/push, SSH, credentials, worktree
-checkout/status, staging, merge/rebase, text patches, rename detection, Git LFS,
-SHA-256 repositories, signing, hooks, filters, and reflogs. Submodule entries can
-be inspected but their repositories are not traversed. Ref names, file paths,
-and identities must be UTF-8; binary file contents and messages are preserved.
+**Not implemented:** network clone/fetch/push, SSH, credentials, merge/rebase,
+text patches, rename detection, Git LFS, SHA-256 repositories, signing, hooks,
+filters, and reflogs. Checkout does not recurse into submodules; sparse checkout
+and split indexes are unsupported. On WASI, executable permission bits cannot
+be set on checked-out files, so checking out an executable entry may appear as
+a mode change to native Git. Ref names, file paths, and identities must be
+UTF-8; binary file contents and messages are preserved.
 Colon-leading revision expressions (including index lookups such as `:file`)
 are explicitly rejected; tree lookups such as `HEAD:file` are supported.
 There is deliberately no arbitrary command or shell escape export.
@@ -94,8 +101,21 @@ does not change symbolic `HEAD`.
 
 Duplicate/overlapping paths, traversal paths, `.git` components, nonexistent
 deletions, replacing directories, and no-op commits are rejected. Deleting the
-last file is supported. File modes are regular, executable, and symlink.
-Symlinks are Git blobs containing target bytes, not host filesystem links.
+last file is supported. `add`, `remove`, and `reset` require explicit paths and
+do not implement Git pathspec magic. Symlinks are created as filesystem links
+during checkout and represented in the index as Git blobs containing target
+bytes.
+
+Checkout refuses staged or unstaged changes and untracked-file collisions by
+default. `force: true` permits overwriting tracked changes and colliding
+untracked paths; unrelated untracked files are preserved. Worktree operations
+do not run hooks or filters, so repositories that rely on clean/smudge filters
+or LFS need those transformations performed externally.
+
+Index reads obtain the index timestamp through
+`std::fs::Metadata::modified()` rather than gitoxide's unsupported WASI
+filetime conversion. Unmerged entries, split indexes, sparse indexes, and
+special index flags are rejected rather than silently rewritten.
 
 Failed writes can leave unreachable Git objects, just as ordinary Git does;
 they do not advance the branch. An interrupted write can leave a `.lock` file;

@@ -13,7 +13,8 @@ wit_bindgen::generate!({
 });
 
 use exports::yoshuawuyts::git::repository::{
-    Change, Commit, Difference, Entry, Error, FileMode, Guest, Reference, Signature,
+    Change, ChangeKind, CommitRecord, Difference, Entry, Error, FileMode, FileStatus, Guest,
+    Reference, Signature,
 };
 use gix::bstr::ByteSlice;
 use std::collections::{BTreeMap, BTreeSet};
@@ -70,7 +71,7 @@ impl Guest for Component {
         out.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(out)
     }
-    fn log(path: String, revision: String, limit: u32) -> Result<Vec<Commit>, Error> {
+    fn log(path: String, revision: String, limit: u32) -> Result<Vec<CommitRecord>, Error> {
         if !(1..=1000).contains(&limit) {
             return Err(Error::InvalidInput("log limit must be 1..=1000".into()));
         }
@@ -81,7 +82,7 @@ impl Guest for Component {
             let commit = repo.find_commit(id).map_err(repository_error)?;
             let decoded = commit.decode().map_err(repository_error)?;
             let parents: Vec<_> = decoded.parents().collect();
-            out.push(Commit {
+            out.push(CommitRecord {
                 id: id.to_string(),
                 tree: decoded.tree().to_string(),
                 parents: parents.iter().map(ToString::to_string).collect(),
@@ -141,6 +142,268 @@ impl Guest for Component {
             }
         }
         Ok(out)
+    }
+    fn checkout(path: String, revision: String, force: bool) -> Result<(), Error> {
+        let repo = open_worktree(&path)?;
+        let target_branch = checkout_branch(&repo, &revision)?;
+        let target = commit_id(&repo, &revision)?;
+        let target_tree = repo
+            .find_commit(target)
+            .map_err(repository_error)?
+            .tree_id()
+            .map_err(repository_error)?
+            .detach();
+        let target_entries = entries(&repo, target_tree)?;
+
+        let current_index = read_index(&repo)?;
+        let current_entries = index_entries(&current_index)?;
+        let statuses = worktree_status(&repo, &current_index)?;
+        if !force
+            && statuses.iter().any(|status| {
+                status.staged.is_some()
+                    || status.unstaged.is_some()
+                    || status.untracked
+                        && target_entries.contains_key(&status.path)
+                        && !current_entries.contains_key(&status.path)
+            })
+        {
+            return Err(Error::Conflict(
+                "checkout would overwrite uncommitted changes".into(),
+            ));
+        }
+        if !force {
+            for file in target_entries.keys() {
+                if current_entries.contains_key(file) {
+                    continue;
+                }
+                let destination = match worktree_file_path(&repo, file) {
+                    Ok(path) => path,
+                    Err(Error::InvalidInput(_)) => {
+                        return Err(Error::Conflict(format!(
+                            "checkout path collides with an existing path: {file}"
+                        )));
+                    }
+                    Err(error) => return Err(error),
+                };
+                if std::fs::symlink_metadata(destination).is_ok() {
+                    return Err(Error::Conflict(format!(
+                        "checkout would overwrite untracked path: {file}"
+                    )));
+                }
+            }
+        }
+
+        for (path, entry) in &target_entries {
+            if entry.mode == 0o160_000 {
+                return Err(Error::Unsupported(format!(
+                    "checkout of submodule entry is not supported: {path}"
+                )));
+            }
+            validate_checkout_entry(&repo, entry)?;
+        }
+
+        for old_path in current_entries.keys() {
+            if !target_entries.contains_key(old_path) {
+                remove_worktree_path(&repo, old_path, force)?;
+            }
+        }
+        for entry in target_entries.values() {
+            write_worktree_entry(&repo, entry, force)?;
+        }
+
+        let mut index = repo
+            .index_from_tree(&target_tree)
+            .map_err(repository_error)?;
+        write_index_atomic(&repo, &mut index)?;
+        write_head_atomic(
+            &repo,
+            target_branch
+                .as_deref()
+                .map_or_else(
+                    || format!("{target}\n"),
+                    |branch| format!("ref: refs/heads/{branch}\n"),
+                )
+                .as_bytes(),
+        )?;
+        Ok(())
+    }
+    fn status(path: String) -> Result<Vec<FileStatus>, Error> {
+        let repo = open_worktree(&path)?;
+        let index = read_index(&repo)?;
+        worktree_status(&repo, &index)
+    }
+    fn add(path: String, paths: Vec<String>) -> Result<(), Error> {
+        let repo = open_worktree(&path)?;
+        let mut index = read_index(&repo)?;
+        let mut entries = index_entries(&index)?;
+        let mut seen = BTreeSet::new();
+        if paths.is_empty() || paths.len() > MAX_ENTRIES {
+            return Err(Error::InvalidInput("add requires 1..=100000 paths".into()));
+        }
+        for path in paths {
+            validate_file_path(&path)?;
+            if !seen.insert(path.clone()) {
+                return Err(Error::InvalidInput(format!("duplicate path: {path}")));
+            }
+            let file = worktree_file_path(&repo, &path)?;
+            let metadata = std::fs::symlink_metadata(&file).map_err(repository_error)?;
+            if metadata.is_dir() {
+                return Err(Error::Unsupported(format!(
+                    "adding directories recursively is not supported: {path}"
+                )));
+            }
+            let (data, mode) = if metadata.file_type().is_symlink() {
+                let target = std::fs::read_link(&file).map_err(repository_error)?;
+                let target = target.to_str().ok_or_else(|| {
+                    Error::Unsupported("non-UTF-8 symlink targets are not supported".into())
+                })?;
+                (target.as_bytes().to_vec(), FileMode::Symlink)
+            } else if metadata.is_file() {
+                let data = std::fs::read(&file).map_err(repository_error)?;
+                if data.len() > MAX_BLOB_BYTES {
+                    return Err(Error::Unsupported("file exceeds 16 MiB".into()));
+                }
+                (data, worktree_file_mode(&metadata))
+            } else {
+                return Err(Error::Unsupported(format!(
+                    "adding this file type is not supported: {path}"
+                )));
+            };
+            let id = repo.write_blob(&data).map_err(repository_error)?;
+            entries.insert(
+                path.clone(),
+                Entry {
+                    path,
+                    id: id.to_string(),
+                    mode: file_mode_value(mode),
+                },
+            );
+        }
+        let tree = write_tree(&repo, &entries)?;
+        index = repo.index_from_tree(&tree).map_err(repository_error)?;
+        write_index_atomic(&repo, &mut index)
+    }
+    fn remove(path: String, paths: Vec<String>) -> Result<(), Error> {
+        let repo = open_worktree(&path)?;
+        let mut index = read_index(&repo)?;
+        let mut entries = index_entries(&index)?;
+        let paths = validate_paths(paths, "remove")?;
+        let mut files = Vec::with_capacity(paths.len());
+        for path in paths {
+            let Some(entry) = entries.remove(&path) else {
+                return Err(Error::InvalidInput(format!(
+                    "cannot remove untracked path: {path}"
+                )));
+            };
+            if worktree_change(&repo, &path, &entry)?.is_some() {
+                return Err(Error::Conflict(format!(
+                    "cannot remove modified working-tree path: {path}"
+                )));
+            }
+            let file = worktree_file_path(&repo, &path)?;
+            match std::fs::symlink_metadata(&file) {
+                Ok(metadata) if metadata.is_file() || metadata.file_type().is_symlink() => {
+                    files.push(file);
+                }
+                Ok(_) => {
+                    return Err(Error::Unsupported(format!(
+                        "removing directories and special files is not supported: {path}"
+                    )));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(repository_error(error)),
+            }
+        }
+        let tree = write_tree(&repo, &entries)?;
+        index = repo.index_from_tree(&tree).map_err(repository_error)?;
+        write_index_atomic(&repo, &mut index)?;
+        for file in files {
+            std::fs::remove_file(file).map_err(repository_error)?;
+        }
+        Ok(())
+    }
+    fn reset(path: String, paths: Vec<String>) -> Result<(), Error> {
+        let repo = open_worktree(&path)?;
+        let mut index = read_index(&repo)?;
+        let mut indexed = index_entries(&index)?;
+        let paths = validate_paths(paths, "reset")?;
+        let head_tree = repo
+            .head_tree_id_or_empty()
+            .map_err(repository_error)?
+            .detach();
+        let head_entries = entries(&repo, head_tree)?;
+        for path in paths {
+            indexed.remove(&path);
+            if let Some(head_entry) = head_entries.get(&path) {
+                indexed.insert(path, head_entry.clone());
+            }
+        }
+        let tree = write_tree(&repo, &indexed)?;
+        index = repo.index_from_tree(&tree).map_err(repository_error)?;
+        write_index_atomic(&repo, &mut index)
+    }
+    fn commit(
+        path: String,
+        expected_parent: Option<String>,
+        author: Signature,
+        message: String,
+    ) -> Result<String, Error> {
+        let signature = encode_signature(author)?;
+        if message.trim().is_empty() || message.contains('\0') {
+            return Err(Error::InvalidInput(
+                "commit message must be nonempty and contain no NUL".into(),
+            ));
+        }
+        let repo = open_worktree(&path)?;
+        let head = repo
+            .head_name()
+            .map_err(repository_error)?
+            .ok_or_else(|| Error::Unsupported("commit requires a checked-out branch".into()))?;
+        let branch = utf8(head.as_bstr())?
+            .strip_prefix("refs/heads/")
+            .ok_or_else(|| Error::Unsupported("HEAD does not point to a local branch".into()))?
+            .to_owned();
+        let name = branch_name(&branch)?;
+        let parent = expected_parent
+            .map(|id| gix::ObjectId::from_hex(id.as_bytes()).map_err(invalid_input))
+            .transpose()?;
+        let current = repo
+            .try_find_reference(name.as_str())
+            .map_err(repository_error)?;
+        if current
+            .as_ref()
+            .and_then(gix::Reference::try_id)
+            .map(gix::Id::detach)
+            != parent
+            || current.as_ref().is_some_and(|r| r.try_id().is_none())
+        {
+            return Err(Error::Conflict(
+                "branch changed; reread its current commit".into(),
+            ));
+        }
+        let index = read_index(&repo)?;
+        let indexed = index_entries(&index)?;
+        let tree = write_tree(&repo, &indexed)?;
+        if let Some(parent) = parent {
+            let parent_tree = repo
+                .find_commit(parent)
+                .map_err(repository_error)?
+                .tree_id()
+                .map_err(repository_error)?
+                .detach();
+            if tree == parent_tree {
+                return Err(Error::InvalidInput(
+                    "index does not contain changes to commit".into(),
+                ));
+            }
+        }
+        let mut time = gix::date::parse::TimeBuf::default();
+        let signature = signature.to_ref(&mut time);
+        let commit = repo
+            .new_commit_as(signature, signature, &message, tree, parent)
+            .map_err(repository_error)?;
+        update_branch(&repo, &name, commit.id, parent)?;
+        Ok(commit.id.to_string())
     }
     fn create_branch(path: String, branch: String, revision: String) -> Result<(), Error> {
         let name = branch_name(&branch)?;
@@ -263,6 +526,559 @@ impl Guest for Component {
 
 fn repository_error(error: impl std::fmt::Debug) -> Error {
     Error::Repository(format!("{error:#?}"))
+}
+
+fn open_worktree(path: &str) -> Result<gix::Repository, Error> {
+    let repo = open(path)?;
+    if repo.is_bare() || repo.workdir().is_none() {
+        return Err(Error::Unsupported(
+            "operation requires a working repository".into(),
+        ));
+    }
+    Ok(repo)
+}
+
+fn checkout_branch(repo: &gix::Repository, revision: &str) -> Result<Option<String>, Error> {
+    if revision == "HEAD" {
+        return repo
+            .head_name()
+            .map_err(repository_error)?
+            .map(|name| utf8(name.as_bstr()))
+            .transpose()
+            .map(|name| name.and_then(|name| name.strip_prefix("refs/heads/").map(str::to_owned)));
+    }
+    let candidate = revision.strip_prefix("refs/heads/").unwrap_or(revision);
+    let Ok(name) = branch_name(candidate) else {
+        return Ok(None);
+    };
+    Ok(repo
+        .try_find_reference(name.as_str())
+        .map_err(repository_error)?
+        .map(|_| candidate.to_owned()))
+}
+
+fn read_index(repo: &gix::Repository) -> Result<gix::index::File, Error> {
+    let path = repo.index_path();
+    let data = match std::fs::read(&path) {
+        Ok(data) => data,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(gix::index::File::from_state(
+                gix::index::State::new(repo.object_hash()),
+                path,
+            ));
+        }
+        Err(error) => return Err(repository_error(error)),
+    };
+    if data.len() > MAX_BLOB_BYTES {
+        return Err(Error::Unsupported("index exceeds 16 MiB".into()));
+    }
+    let modified = std::fs::metadata(&path)
+        .and_then(|metadata| metadata.modified())
+        .unwrap_or(std::time::UNIX_EPOCH);
+    let timestamp = filetime::FileTime::from_system_time(modified);
+    let (state, _) = gix::index::State::from_bytes(
+        &data,
+        timestamp,
+        repo.object_hash(),
+        gix::index::decode::Options {
+            thread_limit: Some(1),
+            ..Default::default()
+        },
+    )
+    .map_err(repository_error)?;
+    Ok(gix::index::File::from_state(state, path))
+}
+
+fn write_index_atomic(repo: &gix::Repository, index: &mut gix::index::File) -> Result<(), Error> {
+    use std::io::Write;
+
+    let path = repo.index_path();
+    let lock_path = path.with_file_name("index.lock");
+    let mut lock = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                Error::Conflict("index is locked by another writer".into())
+            } else {
+                repository_error(error)
+            }
+        })?;
+    index.remove_tree();
+    let result = (|| {
+        index
+            .write_to(&mut lock, gix::index::write::Options::default())
+            .map_err(repository_error)?;
+        lock.flush().map_err(repository_error)?;
+        lock.sync_all().map_err(repository_error)
+    })();
+    drop(lock);
+    if let Err(error) = result {
+        std::fs::remove_file(&lock_path).map_err(|cleanup| {
+            Error::Repository(format!("{error:?}; failed to remove index lock: {cleanup}"))
+        })?;
+        return Err(error);
+    }
+    if let Err(error) = std::fs::rename(&lock_path, &path) {
+        std::fs::remove_file(&lock_path).map_err(|cleanup| {
+            Error::Repository(format!("{error}; failed to remove index lock: {cleanup}"))
+        })?;
+        return Err(repository_error(error));
+    }
+    Ok(())
+}
+
+fn index_entries(index: &gix::index::File) -> Result<BTreeMap<String, Entry>, Error> {
+    let mut entries = BTreeMap::new();
+    for entry in index.entries() {
+        if entry.stage() != gix::index::entry::Stage::Unconflicted {
+            return Err(Error::Unsupported(
+                "unmerged index entries are not supported".into(),
+            ));
+        }
+        if entry.flags.intersects(
+            gix::index::entry::Flags::ASSUME_VALID
+                | gix::index::entry::Flags::INTENT_TO_ADD
+                | gix::index::entry::Flags::SKIP_WORKTREE
+                | gix::index::entry::Flags::UPDATE_IN_BASE
+                | gix::index::entry::Flags::STRIP_NAME,
+        ) {
+            return Err(Error::Unsupported(
+                "special and split-index entries are not supported".into(),
+            ));
+        }
+        let path = utf8(entry.path(index))?;
+        validate_file_path(&path)?;
+        let value = Entry {
+            path: path.clone(),
+            id: entry.id.to_string(),
+            mode: entry.mode.bits(),
+        };
+        if entries.insert(path, value).is_some() {
+            return Err(Error::Repository("duplicate index entry".into()));
+        }
+    }
+    Ok(entries)
+}
+
+fn write_tree(
+    repo: &gix::Repository,
+    entries: &BTreeMap<String, Entry>,
+) -> Result<gix::ObjectId, Error> {
+    if entries.len() > MAX_ENTRIES {
+        return Err(Error::Unsupported("index exceeds 100000 entries".into()));
+    }
+    let base = gix::ObjectId::empty_tree(repo.object_hash());
+    let mut editor = repo.edit_tree(base).map_err(repository_error)?;
+    for entry in entries.values() {
+        validate_file_path(&entry.path)?;
+        let id = gix::ObjectId::from_hex(entry.id.as_bytes()).map_err(invalid_input)?;
+        let kind = match entry.mode {
+            0o100_644 => gix::objs::tree::EntryKind::Blob,
+            0o100_755 => gix::objs::tree::EntryKind::BlobExecutable,
+            0o120_000 => gix::objs::tree::EntryKind::Link,
+            0o160_000 => gix::objs::tree::EntryKind::Commit,
+            _ => {
+                return Err(Error::Unsupported(format!(
+                    "unsupported index mode {:o} for {}",
+                    entry.mode, entry.path
+                )));
+            }
+        };
+        editor
+            .upsert(&entry.path, kind, id)
+            .map_err(repository_error)?;
+    }
+    Ok(editor.write().map_err(repository_error)?.detach())
+}
+
+fn validate_paths(paths: Vec<String>, operation: &str) -> Result<Vec<String>, Error> {
+    if paths.is_empty() || paths.len() > MAX_ENTRIES {
+        return Err(Error::InvalidInput(format!(
+            "{operation} requires 1..=100000 paths"
+        )));
+    }
+    let mut unique = BTreeSet::new();
+    for path in &paths {
+        validate_file_path(path)?;
+        if !unique.insert(path.as_str()) {
+            return Err(Error::InvalidInput(format!("duplicate path: {path}")));
+        }
+    }
+    Ok(paths)
+}
+
+fn worktree_file_path(repo: &gix::Repository, path: &str) -> Result<std::path::PathBuf, Error> {
+    validate_file_path(path)?;
+    let root = repo
+        .workdir()
+        .ok_or_else(|| Error::Unsupported("operation requires a working repository".into()))?;
+    let mut current = root.to_owned();
+    let mut parts = path.split('/').peekable();
+    while let Some(part) = parts.next() {
+        current.push(part);
+        if parts.peek().is_some() {
+            match std::fs::symlink_metadata(&current) {
+                Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+                Ok(_) => {
+                    return Err(Error::InvalidInput(format!(
+                        "path crosses a non-directory: {path}"
+                    )));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                Err(error) => return Err(repository_error(error)),
+            }
+        }
+    }
+    Ok(current)
+}
+
+fn remove_worktree_path(repo: &gix::Repository, path: &str, force: bool) -> Result<(), Error> {
+    let file = worktree_file_path(repo, path)?;
+    match std::fs::symlink_metadata(&file) {
+        Ok(metadata) if metadata.is_dir() => {
+            if force {
+                std::fs::remove_dir_all(file).map_err(repository_error)?;
+            } else {
+                std::fs::remove_dir(file).map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::DirectoryNotEmpty {
+                        Error::Conflict(format!("checkout would overwrite untracked path: {path}"))
+                    } else {
+                        repository_error(error)
+                    }
+                })?;
+            }
+        }
+        Ok(_) => std::fs::remove_file(file).map_err(repository_error)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(repository_error(error)),
+    }
+    Ok(())
+}
+
+fn write_worktree_entry(repo: &gix::Repository, entry: &Entry, force: bool) -> Result<(), Error> {
+    validate_file_path(&entry.path)?;
+    let root = repo
+        .workdir()
+        .ok_or_else(|| Error::Unsupported("checkout requires a working repository".into()))?;
+    let relative = std::path::Path::new(&entry.path);
+    let file = root.join(relative);
+    let mut parent = root.to_owned();
+    for component in relative
+        .parent()
+        .into_iter()
+        .flat_map(std::path::Path::components)
+    {
+        parent.push(component);
+        match std::fs::symlink_metadata(&parent) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) if force => {
+                std::fs::remove_file(&parent).map_err(repository_error)?;
+                std::fs::create_dir(&parent).map_err(repository_error)?;
+            }
+            Ok(_) => {
+                return Err(Error::Conflict(format!(
+                    "checkout path crosses a non-directory: {}",
+                    entry.path
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&parent).map_err(repository_error)?;
+            }
+            Err(error) => return Err(repository_error(error)),
+        }
+    }
+
+    if let Ok(metadata) = std::fs::symlink_metadata(&file) {
+        if metadata.is_dir() {
+            if force {
+                std::fs::remove_dir_all(&file).map_err(repository_error)?;
+            } else {
+                std::fs::remove_dir(&file).map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::DirectoryNotEmpty {
+                        Error::Conflict(format!(
+                            "checkout would overwrite untracked path: {}",
+                            entry.path
+                        ))
+                    } else {
+                        repository_error(error)
+                    }
+                })?;
+            }
+        } else {
+            std::fs::remove_file(&file).map_err(repository_error)?;
+        }
+    }
+
+    let id = gix::ObjectId::from_hex(entry.id.as_bytes()).map_err(invalid_input)?;
+    let object = repo.find_object(id).map_err(repository_error)?;
+    if object.kind != gix::objs::Kind::Blob {
+        return Err(Error::Repository(format!(
+            "expected blob for checkout path {}",
+            entry.path
+        )));
+    }
+    if object.data.len() > MAX_BLOB_BYTES {
+        return Err(Error::Unsupported(format!(
+            "checkout blob exceeds 16 MiB: {}",
+            entry.path
+        )));
+    }
+    match entry.mode {
+        0o100_644 | 0o100_755 => {
+            std::fs::write(&file, &object.data).map_err(repository_error)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = if entry.mode == 0o100_755 {
+                    0o755
+                } else {
+                    0o644
+                };
+                std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode))
+                    .map_err(repository_error)?;
+            }
+        }
+        0o120_000 => {
+            let target = std::str::from_utf8(&object.data).map_err(|_| {
+                Error::Unsupported(format!(
+                    "non-UTF-8 symlink targets are not supported: {}",
+                    entry.path
+                ))
+            })?;
+            gix::fs::symlink::create(std::path::Path::new(target), &file)
+                .map_err(repository_error)?;
+        }
+        mode => {
+            return Err(Error::Unsupported(format!(
+                "unsupported checkout mode {mode:o} for {}",
+                entry.path
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_checkout_entry(repo: &gix::Repository, entry: &Entry) -> Result<(), Error> {
+    if !matches!(entry.mode, 0o100_644 | 0o100_755 | 0o120_000) {
+        return Err(Error::Unsupported(format!(
+            "unsupported checkout mode {:o} for {}",
+            entry.mode, entry.path
+        )));
+    }
+    let id = gix::ObjectId::from_hex(entry.id.as_bytes()).map_err(invalid_input)?;
+    let object = repo.find_object(id).map_err(repository_error)?;
+    if object.kind != gix::objs::Kind::Blob {
+        return Err(Error::Repository(format!(
+            "expected blob for checkout path {}",
+            entry.path
+        )));
+    }
+    if object.data.len() > MAX_BLOB_BYTES {
+        return Err(Error::Unsupported(format!(
+            "checkout blob exceeds 16 MiB: {}",
+            entry.path
+        )));
+    }
+    if entry.mode == 0o120_000 && std::str::from_utf8(&object.data).is_err() {
+        return Err(Error::Unsupported(format!(
+            "non-UTF-8 symlink targets are not supported: {}",
+            entry.path
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn worktree_file_mode(metadata: &std::fs::Metadata) -> FileMode {
+    use std::os::unix::fs::PermissionsExt;
+    if metadata.permissions().mode() & 0o111 != 0 {
+        FileMode::Executable
+    } else {
+        FileMode::Regular
+    }
+}
+
+#[cfg(not(unix))]
+fn worktree_file_mode(_: &std::fs::Metadata) -> FileMode {
+    FileMode::Regular
+}
+
+fn file_mode_value(mode: FileMode) -> u32 {
+    match mode {
+        FileMode::Regular => 0o100_644,
+        FileMode::Executable => 0o100_755,
+        FileMode::Symlink => 0o120_000,
+    }
+}
+
+fn status_kind(before: Option<&Entry>, after: Option<&Entry>) -> Option<ChangeKind> {
+    match (before, after) {
+        (None, Some(_)) => Some(ChangeKind::Added),
+        (Some(_), None) => Some(ChangeKind::Removed),
+        (Some(before), Some(after)) if before.mode != after.mode => Some(ChangeKind::TypeChanged),
+        (Some(before), Some(after)) if before.id != after.id => Some(ChangeKind::Modified),
+        (None, None) | (Some(_), Some(_)) => None,
+    }
+}
+
+fn worktree_status(
+    repo: &gix::Repository,
+    index: &gix::index::File,
+) -> Result<Vec<FileStatus>, Error> {
+    let indexed = index_entries(index)?;
+    let head_tree = repo
+        .head_tree_id_or_empty()
+        .map_err(repository_error)?
+        .detach();
+    let head = entries(repo, head_tree)?;
+    let paths: BTreeSet<_> = head.keys().chain(indexed.keys()).cloned().collect();
+    let mut statuses = BTreeMap::new();
+    for path in paths {
+        let staged = status_kind(head.get(&path), indexed.get(&path));
+        if staged.is_some() {
+            statuses.insert(
+                path.clone(),
+                FileStatus {
+                    path,
+                    staged,
+                    unstaged: None,
+                    untracked: false,
+                },
+            );
+        }
+    }
+    for (path, entry) in &indexed {
+        if let Some(kind) = worktree_change(repo, path, entry)? {
+            statuses
+                .entry(path.clone())
+                .and_modify(|status: &mut FileStatus| status.unstaged = Some(kind))
+                .or_insert(FileStatus {
+                    path: path.clone(),
+                    staged: None,
+                    unstaged: Some(kind),
+                    untracked: false,
+                });
+        }
+    }
+
+    let mut options = repo.dirwalk_options().map_err(repository_error)?;
+    options = options.emit_untracked(gix::dir::walk::EmissionMode::Matching);
+    let mut collected = gix::dir::walk::delegate::Collect::default();
+    repo.dirwalk(
+        index,
+        std::iter::empty::<&[u8]>(),
+        &std::sync::atomic::AtomicBool::new(false),
+        options,
+        &mut collected,
+    )
+    .map_err(repository_error)?;
+    for (entry, _) in collected.into_entries_by_path() {
+        if entry.status == gix::dir::entry::Status::Untracked {
+            let path = utf8(&entry.rela_path)?;
+            statuses.insert(
+                path.clone(),
+                FileStatus {
+                    path,
+                    staged: None,
+                    unstaged: None,
+                    untracked: true,
+                },
+            );
+        }
+    }
+    Ok(statuses.into_values().collect())
+}
+
+fn worktree_change(
+    repo: &gix::Repository,
+    path: &str,
+    entry: &Entry,
+) -> Result<Option<ChangeKind>, Error> {
+    let file = worktree_file_path(repo, path)?;
+    let metadata = match std::fs::symlink_metadata(&file) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Some(ChangeKind::Removed));
+        }
+        Err(error) => return Err(repository_error(error)),
+    };
+    if metadata.is_dir() {
+        return Ok(Some(ChangeKind::TypeChanged));
+    }
+    let (id, mode) = if metadata.file_type().is_symlink() {
+        let target = std::fs::read_link(&file).map_err(repository_error)?;
+        let target = target.to_str().ok_or_else(|| {
+            Error::Unsupported("non-UTF-8 symlink targets are not supported".into())
+        })?;
+        (
+            gix::objs::compute_hash(repo.object_hash(), gix::objs::Kind::Blob, target.as_bytes())
+                .map_err(repository_error)?,
+            0o120_000,
+        )
+    } else if metadata.is_file() {
+        let mut file = std::fs::File::open(&file).map_err(repository_error)?;
+        let id = gix::objs::compute_stream_hash(
+            repo.object_hash(),
+            gix::objs::Kind::Blob,
+            &mut file,
+            metadata.len(),
+            &mut gix::progress::Discard,
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .map_err(repository_error)?;
+        (id, file_mode_value(worktree_file_mode(&metadata)))
+    } else {
+        return Ok(Some(ChangeKind::TypeChanged));
+    };
+    if (entry.mode == 0o120_000) != (mode == 0o120_000)
+        || entry.mode == 0o160_000
+        || mode == 0o160_000
+    {
+        return Ok(Some(ChangeKind::TypeChanged));
+    }
+    let entry_id = gix::ObjectId::from_hex(entry.id.as_bytes()).map_err(invalid_input)?;
+    if entry_id != id || entry.mode != mode {
+        return Ok(Some(ChangeKind::Modified));
+    }
+    Ok(None)
+}
+
+fn write_head_atomic(repo: &gix::Repository, data: &[u8]) -> Result<(), Error> {
+    use std::io::Write;
+
+    let target = repo.git_dir().join("HEAD");
+    let lock_path = repo.git_dir().join("HEAD.lock");
+    let mut lock = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                Error::Conflict("HEAD is locked by another writer".into())
+            } else {
+                repository_error(error)
+            }
+        })?;
+    let result = (|| {
+        lock.write_all(data).map_err(repository_error)?;
+        lock.sync_all().map_err(repository_error)
+    })();
+    drop(lock);
+    if let Err(error) = result {
+        std::fs::remove_file(&lock_path).map_err(|cleanup| {
+            Error::Repository(format!("{error:?}; failed to remove HEAD lock: {cleanup}"))
+        })?;
+        return Err(error);
+    }
+    if let Err(error) = std::fs::rename(&lock_path, &target) {
+        std::fs::remove_file(&lock_path).map_err(|cleanup| {
+            Error::Repository(format!("{error}; failed to remove HEAD lock: {cleanup}"))
+        })?;
+        return Err(repository_error(error));
+    }
+    Ok(())
 }
 
 fn invalid_input(error: impl std::fmt::Display) -> Error {

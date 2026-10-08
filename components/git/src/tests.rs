@@ -315,3 +315,98 @@ fn limits_are_enforced_without_creating_a_reference() {
     assert!(validate_changes(&changes).is_err());
     assert!(Component::references(path).unwrap().is_empty());
 }
+
+#[test]
+fn working_tree_staging_status_commit_and_checkout() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("worktree");
+    gix::ThreadSafeRepository::init(
+        &path,
+        gix::create::Kind::WithWorktree,
+        gix::create::Options::default(),
+    )
+    .unwrap();
+    let path = path.to_str().unwrap().to_owned();
+    std::fs::write(
+        std::path::Path::new(&path).join(".gitignore"),
+        "*.ignored\n",
+    )
+    .unwrap();
+    std::fs::write(std::path::Path::new(&path).join("file"), b"first\n").unwrap();
+    std::fs::write(
+        std::path::Path::new(&path).join("hidden.ignored"),
+        b"ignored\n",
+    )
+    .unwrap();
+    Component::add(path.clone(), vec![".gitignore".into(), "file".into()]).unwrap();
+    let first = Component::commit(path.clone(), None, author(), "initial\n".into()).unwrap();
+    assert!(Component::status(path.clone()).unwrap().is_empty());
+
+    std::fs::write(std::path::Path::new(&path).join("file"), b"second\n").unwrap();
+    std::fs::write(std::path::Path::new(&path).join("new"), b"untracked\n").unwrap();
+    let status = Component::status(path.clone()).unwrap();
+    assert!(
+        status
+            .iter()
+            .any(|item| { item.path == "file" && item.unstaged == Some(ChangeKind::Modified) })
+    );
+    assert!(
+        status
+            .iter()
+            .any(|item| item.path == "new" && item.untracked)
+    );
+    assert!(!status.iter().any(|item| item.path == "hidden.ignored"));
+    assert!(matches!(
+        Component::checkout(path.clone(), first.clone(), false),
+        Err(Error::Conflict(_))
+    ));
+
+    Component::add(path.clone(), vec!["file".into()]).unwrap();
+    Component::reset(path.clone(), vec!["file".into()]).unwrap();
+    let status = Component::status(path.clone()).unwrap();
+    assert!(status.iter().any(|item| item.path == "file"
+        && item.staged.is_none()
+        && item.unstaged == Some(ChangeKind::Modified)));
+
+    Component::add(path.clone(), vec!["file".into()]).unwrap();
+    let second = Component::commit(
+        path.clone(),
+        Some(first.clone()),
+        author(),
+        "second\n".into(),
+    )
+    .unwrap();
+    assert_eq!(
+        Component::resolve(path.clone(), "HEAD".into()).unwrap(),
+        second
+    );
+    let file = std::path::Path::new(&path).join("file");
+    std::fs::write(&file, b"uncommitted edit\n").unwrap();
+    assert!(matches!(
+        Component::remove(path.clone(), vec!["file".into()]),
+        Err(Error::Conflict(_))
+    ));
+    assert_eq!(std::fs::read(&file).unwrap(), b"uncommitted edit\n");
+    std::fs::write(&file, b"second\n").unwrap();
+    Component::remove(path.clone(), vec!["file".into()]).unwrap();
+    assert!(!file.exists());
+    assert!(
+        Component::status(path.clone())
+            .unwrap()
+            .iter()
+            .any(|item| item.path == "file" && item.staged == Some(ChangeKind::Removed))
+    );
+
+    Component::checkout(path.clone(), first, true).unwrap();
+    assert_eq!(
+        std::fs::read(std::path::Path::new(&path).join("file")).unwrap(),
+        b"first\n"
+    );
+    assert!(std::path::Path::new(&path).join("new").exists());
+    assert!(
+        Component::status(path)
+            .unwrap()
+            .iter()
+            .any(|item| item.path == "new" && item.untracked)
+    );
+}
