@@ -13,8 +13,9 @@ wit_bindgen::generate!({
 });
 
 use exports::yoshuawuyts::git::repository::{
-    Change, ChangeKind, CommitRecord, Difference, Entry, Error, FileMode, FileStatus, Guest,
-    MergeConflict, MergeResult, RebaseConflict, RebaseResult, RebaseSuccess, Reference, Signature,
+    BlameLine, BlameOptions, Change, ChangeKind, CommitRecord, Difference, Entry, Error,
+    FileDifference, FileMode, FilePatch, FileStatus, Guest, MergeConflict, MergeResult,
+    PatchOptions, RebaseConflict, RebaseResult, RebaseSuccess, Reference, Signature,
 };
 use gix::bstr::ByteSlice;
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,6 +24,8 @@ const MAX_BLOB_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ENTRIES: usize = 100_000;
 const MAX_DEPTH: usize = 128;
 const MAX_HISTORY: usize = 1000;
+
+mod patches;
 
 /// Native entry point, also exported through the component's WIT interface.
 #[derive(Debug)]
@@ -143,6 +146,30 @@ impl Guest for Component {
             }
         }
         Ok(out)
+    }
+    fn diff_renames(
+        path: String,
+        before: String,
+        after: String,
+        max_files: u32,
+    ) -> Result<Vec<FileDifference>, Error> {
+        patches::diff_renames(&open(&path)?, &before, &after, max_files)
+    }
+    fn unified_diff(
+        path: String,
+        before: String,
+        after: String,
+        options: PatchOptions,
+    ) -> Result<Vec<FilePatch>, Error> {
+        patches::unified_diff(&open(&path)?, &before, &after, &options)
+    }
+    fn blame(
+        path: String,
+        revision: String,
+        file: String,
+        options: BlameOptions,
+    ) -> Result<Vec<BlameLine>, Error> {
+        patches::blame(&open(&path)?, &revision, &file, &options)
     }
     fn checkout(path: String, revision: String, force: bool) -> Result<(), Error> {
         let repo = open_worktree(&path)?;

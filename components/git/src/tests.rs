@@ -40,6 +40,243 @@ fn commit_branch(path: &str, branch: &str, parent: Option<String>, changes: Vec<
     .unwrap()
 }
 
+fn patch_options(context_lines: u32) -> PatchOptions {
+    PatchOptions {
+        context_lines,
+        max_files: 1000,
+        max_bytes: 16_777_216,
+        detect_renames: true,
+    }
+}
+
+fn blame_options() -> BlameOptions {
+    BlameOptions {
+        start_line: 1,
+        max_lines: 100_000,
+        max_commits: 1000,
+    }
+}
+
+#[test]
+fn patches_cover_renames_modes_binary_empty_and_eof() {
+    let (_dir, path) = repo();
+    let first = commit(
+        &path,
+        None,
+        vec![
+            change("old", Some(b"unchanged\n"), FileMode::Regular),
+            change("edit", Some(b"one\ntwo\nthree"), FileMode::Regular),
+            change("binary", Some(b"\0a"), FileMode::Regular),
+            change("empty", Some(b""), FileMode::Regular),
+            change("mode", Some(b"mode\n"), FileMode::Regular),
+        ],
+    );
+    let second = commit(
+        &path,
+        Some(first.clone()),
+        vec![
+            change("old", None, FileMode::Regular),
+            change("new", Some(b"unchanged\n"), FileMode::Executable),
+            change("edit", Some(b"one\nTWO\nthree\n"), FileMode::Regular),
+            change("binary", Some(b"\0b"), FileMode::Regular),
+            change("empty", None, FileMode::Regular),
+            change("new-empty", Some(b""), FileMode::Regular),
+            change("mode", Some(b"mode\n"), FileMode::Executable),
+        ],
+    );
+    let original = Component::diff(path.clone(), first.clone(), second.clone()).unwrap();
+    assert_eq!(original.len(), 7);
+    let renamed =
+        Component::diff_renames(path.clone(), first.clone(), second.clone(), 1000).unwrap();
+    assert_eq!(renamed.len(), 5);
+    assert_eq!(renamed.iter().filter(|d| d.renamed).count(), 2);
+    let patches = Component::unified_diff(
+        path.clone(),
+        first.clone(),
+        second.clone(),
+        patch_options(0),
+    )
+    .unwrap();
+    let edit = patches
+        .iter()
+        .find(|p| {
+            p.difference
+                .after
+                .as_ref()
+                .is_some_and(|e| e.path == "edit")
+        })
+        .unwrap();
+    let text = std::str::from_utf8(&edit.patch).unwrap();
+    assert!(
+        text.contains(
+            "@@ -2,2 +2,2 @@\n-two\n-three\n\\ No newline at end of file\n+TWO\n+three\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        patches
+            .iter()
+            .find(|p| p.binary)
+            .unwrap()
+            .patch
+            .windows(b"Binary files".len())
+            .any(|w| w == b"Binary files")
+    );
+    assert!(patches.iter().any(|p| {
+        std::str::from_utf8(&p.patch)
+            .unwrap()
+            .contains("old mode 100644\nnew mode 100755")
+    }));
+    assert!(patches.iter().any(|p| {
+        std::str::from_utf8(&p.patch)
+            .unwrap()
+            .contains("rename from old\nrename to new")
+    }));
+    let mut options = patch_options(3);
+    options.max_bytes = 1;
+    assert!(matches!(
+        Component::unified_diff(path.clone(), first.clone(), second.clone(), options),
+        Err(Error::Unsupported(_))
+    ));
+    assert!(matches!(
+        Component::diff_renames(path.clone(), first.clone(), second.clone(), 1),
+        Err(Error::Unsupported(_))
+    ));
+    assert!(matches!(
+        Component::diff_renames(path.clone(), first.clone(), second.clone(), 0),
+        Err(Error::InvalidInput(_))
+    ));
+    assert!(matches!(
+        Component::unified_diff(path, first, second, patch_options(101)),
+        Err(Error::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn blame_tracks_lines_and_clean_renames_with_strict_bounds() {
+    let (_dir, path) = repo();
+    let first = commit(
+        &path,
+        None,
+        vec![
+            change("old", Some(b"a\nb\nc\n"), FileMode::Regular),
+            change("empty", Some(b""), FileMode::Regular),
+        ],
+    );
+    let second = commit(
+        &path,
+        Some(first.clone()),
+        vec![change(
+            "old",
+            Some(b"inserted\na\nB\nc\n"),
+            FileMode::Regular,
+        )],
+    );
+    let third = commit(
+        &path,
+        Some(second.clone()),
+        vec![
+            change("old", None, FileMode::Regular),
+            change("new", Some(b"inserted\na\nB\nc\n"), FileMode::Regular),
+        ],
+    );
+    let fourth = commit(
+        &path,
+        Some(third),
+        vec![change(
+            "new",
+            Some(b"inserted\na\nB\nlast\n"),
+            FileMode::Regular,
+        )],
+    );
+    let lines =
+        Component::blame(path.clone(), fourth.clone(), "new".into(), blame_options()).unwrap();
+    assert_eq!(
+        lines
+            .iter()
+            .map(|l| (l.commit.as_str(), l.original_path.as_str(), l.original_line))
+            .collect::<Vec<_>>(),
+        vec![
+            (second.as_str(), "old", 1),
+            (first.as_str(), "old", 1),
+            (second.as_str(), "old", 3),
+            (fourth.as_str(), "new", 4)
+        ]
+    );
+    let mut options = blame_options();
+    options.start_line = 2;
+    options.max_lines = 2;
+    let range = Component::blame(path.clone(), fourth.clone(), "new".into(), options).unwrap();
+    assert_eq!(
+        range.iter().map(|l| l.line_number).collect::<Vec<_>>(),
+        vec![2, 3]
+    );
+    let mut options = blame_options();
+    options.max_commits = 2;
+    assert!(matches!(
+        Component::blame(path.clone(), fourth.clone(), "new".into(), options),
+        Err(Error::Unsupported(_))
+    ));
+    assert!(
+        Component::blame(
+            path.clone(),
+            fourth.clone(),
+            "empty".into(),
+            blame_options()
+        )
+        .unwrap()
+        .is_empty()
+    );
+    for file in ["", "../new", "/new", "new//a", ".git/config", "new\0"] {
+        assert!(matches!(
+            Component::blame(path.clone(), fourth.clone(), file.into(), blame_options()),
+            Err(Error::InvalidInput(_))
+        ));
+    }
+    let mut options = blame_options();
+    options.start_line = 5;
+    assert!(matches!(
+        Component::blame(path, fourth, "new".into(), options),
+        Err(Error::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn blame_rejects_binary_and_ambiguous_rename_histories() {
+    let (_dir, path) = repo();
+    let first = commit(
+        &path,
+        None,
+        vec![
+            change("a", Some(b"same\n"), FileMode::Regular),
+            change("b", Some(b"same\n"), FileMode::Regular),
+            change("binary", Some(b"\0"), FileMode::Regular),
+        ],
+    );
+    assert!(matches!(
+        Component::blame(
+            path.clone(),
+            first.clone(),
+            "binary".into(),
+            blame_options()
+        ),
+        Err(Error::Unsupported(_))
+    ));
+    let second = commit(
+        &path,
+        Some(first),
+        vec![
+            change("a", None, FileMode::Regular),
+            change("b", None, FileMode::Regular),
+            change("c", Some(b"same\n"), FileMode::Regular),
+        ],
+    );
+    assert!(matches!(
+        Component::blame(path, second, "c".into(), blame_options()),
+        Err(Error::Unsupported(_))
+    ));
+}
+
 #[test]
 fn roundtrip_binary_nested_files_history_and_modes() {
     let (_dir, path) = repo();

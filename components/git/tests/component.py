@@ -25,7 +25,7 @@ def run(*args):
 
 
 def string(value):
-    return json.dumps(value)
+    return json.dumps(value, ensure_ascii=False)
 
 
 def main():
@@ -209,6 +209,214 @@ def main():
         assert status == "?? untracked.txt", repr(status)
         native_worktree("fsck", "--strict", "--full")
 
+        # Patches execute inside Wasm; native Git consumes the exact emitted bytes.
+        patch_repo = Path(directory) / "patches"
+        run("git", "init", "--quiet", "--initial-branch=main", str(patch_repo))
+
+        def patch_git(*args):
+            return run("git", "-C", str(patch_repo), *args)
+
+        def patch_commit(message):
+            patch_git("add", "-A")
+            patch_git("-c", "user.name=Oracle", "-c", "user.email=oracle@example.invalid",
+                      "commit", "--quiet", "-m", message)
+            return patch_git("rev-parse", "HEAD")
+
+        strange_paths = [
+            "space name", "tab\tname", "line\nname", 'quo"te', "back\\slash",
+            "colon:name", "caf\u00e9",
+        ]
+        for name in strange_paths:
+            (patch_repo / name).write_bytes(b"old\n")
+        (patch_repo / "edit").write_bytes(b"one\ntwo\nthree")
+        (patch_repo / "old-name").write_bytes(b"clean rename\n")
+        (patch_repo / "empty-delete").write_bytes(b"")
+        (patch_repo / "mode").write_bytes(b"mode\n")
+        (patch_repo / "type").write_bytes(b"target")
+        (patch_repo / "raw").write_bytes(b"\xff\n")
+        (patch_repo / "hunks").write_bytes(b"".join(f"line {i}\n".encode() for i in range(30)))
+        (patch_repo / "insert").write_bytes(b"first\nlast\n")
+        (patch_repo / "remove").write_bytes(b"first\nmiddle\nlast\n")
+        (patch_repo / "crlf").write_bytes(b"first\r\nsecond\r\n")
+        (patch_repo / "binary-old").write_bytes(b"\0unchanged")
+        (patch_repo / "binary-mode").write_bytes(b"\0mode")
+        (patch_repo / "link").symlink_to("old-target")
+        p1 = patch_commit("Patch base")
+        for name in strange_paths:
+            (patch_repo / name).write_bytes(b"new\n")
+        (patch_repo / "edit").write_bytes(b"one\nTWO\nthree\n")
+        (patch_repo / "old-name").rename(patch_repo / "new-name")
+        (patch_repo / "new-name").chmod(0o755)
+        (patch_repo / "empty-delete").unlink()
+        (patch_repo / "empty-add").write_bytes(b"")
+        (patch_repo / "added").write_bytes(b"added without newline")
+        (patch_repo / "mode").chmod(0o755)
+        (patch_repo / "type").unlink()
+        (patch_repo / "type").symlink_to("target")
+        (patch_repo / "link").unlink()
+        (patch_repo / "link").symlink_to("new-target")
+        (patch_repo / "raw").write_bytes(b"\xfe\n")
+        (patch_repo / "insert").write_bytes(b"first\nmiddle\nlast\n")
+        (patch_repo / "remove").write_bytes(b"first\nlast\n")
+        (patch_repo / "crlf").write_bytes(b"first\r\nSECOND\r\n")
+        (patch_repo / "binary-old").rename(patch_repo / "binary-new")
+        (patch_repo / "binary-mode").chmod(0o755)
+        (patch_repo / "hunks").write_bytes(b"".join(
+            (f"changed {i}\n" if i in (2, 25) else f"line {i}\n").encode()
+            for i in range(30)
+        ))
+        p2 = patch_commit("Patch changes")
+
+        def patch_expression(context, detect=True, max_files=1000, max_bytes=16777216):
+            return (
+                f'unified-diff("/repos/patches", "{p1}", "{p2}", '
+                f'{{context-lines: {context}, max-files: {max_files}, '
+                f'max-bytes: {max_bytes}, detect-renames: {str(detect).lower()}}})'
+            )
+
+        for context, detect in [(0, True), (3, True), (100, True)]:
+            output = ok(patch_expression(context, detect))
+            arrays = re.findall(r"patch: \[([\d,\s]*)\]", output)
+            assert arrays, output
+            patch = b"".join(bytes(int(n) for n in data.split(",") if n.strip()) for data in arrays)
+            assert b"\\ No newline at end of file\n" in patch
+            assert b'--- "a/line\\nname"' in patch
+            assert b'--- "a/back\\\\slash"' in patch
+            assert b'--- "a/caf\\303\\251"' in patch
+            assert b"old mode 100644\nnew mode 100755" in patch
+            if detect:
+                assert b"rename from old-name\nrename to new-name" in patch
+                assert b"rename from binary-old\nrename to binary-new" in patch
+            patch_file = Path(directory) / "emitted.patch"
+            patch_file.write_bytes(patch)
+            patch_git("checkout", "--quiet", "--detach", p1)
+            patch_git("apply", "--index", *(
+                ["--unidiff-zero"] if context == 0 else []
+            ), str(patch_file))
+            assert patch_git("write-tree") == patch_git("rev-parse", f"{p2}^{{tree}}")
+            patch_git("reset", "--quiet", "--hard", p1)
+        no_renames = ok(patch_expression(3, False))
+        assert "renamed: true" not in no_renames
+        assert "binary: true" in no_renames
+        error(patch_expression(101), "invalid-input")
+        error(patch_expression(3, max_files=0), "invalid-input")
+        error(patch_expression(3, max_files=1), "unsupported")
+        error(patch_expression(3, max_bytes=1), "unsupported")
+        error(patch_expression(3, max_bytes=0), "invalid-input")
+        rename_output = ok(f'diff-renames("/repos/patches", "{p1}", "{p2}", 1000)')
+        assert "renamed: true" in rename_output and 'path: "new-name"' in rename_output
+        plain_output = ok(f'diff("/repos/patches", "{p1}", "{p2}")')
+        assert 'path: "old-name"' in plain_output and 'path: "new-name"' in plain_output
+        binary_output = ok(
+            f'unified-diff("/repos/agent.git", "{first}", "{second}", '
+            '{context-lines: 3, max-files: 1000, max-bytes: 16777216, detect-renames: true})'
+        )
+        assert "binary: true" in binary_output
+        binary_arrays = re.findall(r"patch: \[([\d,\s]*)\]", binary_output)
+        assert any(b"Binary files" in bytes(int(n) for n in data.split(",") if n.strip())
+                   for data in binary_arrays)
+
+        # Compare complete attribution (commit, original path/line) with Git porcelain.
+        patch_git("checkout", "--quiet", "main")
+        (patch_repo / "blame-old").write_bytes(b"a\nb\nc\n")
+        b1 = patch_commit("Blame base")
+        (patch_repo / "blame-old").write_bytes(b"inserted\na\nB\nc\n")
+        b2 = patch_commit("Blame edit")
+        (patch_repo / "blame-old").rename(patch_repo / "blame-new")
+        b3 = patch_commit("Blame rename")
+        (patch_repo / "blame-new").write_bytes(b"inserted\na\nB\nlast\n")
+        b4 = patch_commit("Blame final")
+
+        def blame_expression(file="blame-new", start=1, lines=100000, commits=1000, revision=b4):
+            return (
+                f'blame("/repos/patches", "{revision}", {string(file)}, '
+                f'{{start-line: {start}, max-lines: {lines}, max-commits: {commits}}})'
+            )
+
+        output = ok(blame_expression())
+        actual = [
+            (int(final), commit, json.loads(original), int(line))
+            for final, commit, original, line in re.findall(
+                r'line-number: (\d+), commit: "([0-9a-f]{40})", '
+                r'original-path: ("(?:[^"\\]|\\.)*"), original-line: (\d+)', output
+            )
+        ]
+        porcelain = patch_git("blame", "--line-porcelain", b4, "--", "blame-new")
+        expected = []
+        header = None
+        for line in porcelain.splitlines():
+            match = re.match(r"^([0-9a-f]{40}) (\d+) (\d+)(?: \d+)?$", line)
+            if match:
+                header = match.groups()
+            elif line.startswith("filename "):
+                commit, original, final = header
+                expected.append((int(final), commit, line[9:], int(original)))
+        assert actual == expected, (actual, expected, output)
+        assert actual == [
+            (1, b2, "blame-old", 1), (2, b1, "blame-old", 1),
+            (3, b2, "blame-old", 3), (4, b4, "blame-new", 4),
+        ]
+        assert "line-number: 2" in ok(blame_expression(start=2, lines=1))
+        for file in strange_paths:
+            assert p2 in ok(blame_expression(file=file))
+        assert ok(blame_expression(file="empty-add")) == "ok([])"
+        error(blame_expression(start=0), "invalid-input")
+        error(blame_expression(start=5), "invalid-input")
+        error(blame_expression(lines=0), "invalid-input")
+        error(blame_expression(commits=0), "invalid-input")
+        error(blame_expression(commits=2), "unsupported")
+        error(blame_expression(file="../blame-new"), "invalid-input")
+        error(blame_expression(file="missing"), "invalid-input")
+        error(blame_expression(file="link"), "unsupported")
+        error(
+            f'blame("/repos/agent.git", "{first}", "src/file", '
+            '{start-line: 1, max-lines: 100000, max-commits: 1000})',
+            "unsupported",
+        )
+        ok('init("/repos/ambiguous.git", "main")')
+        ambiguous_base = commit_on(
+            "ambiguous.git", "main", None,
+            '{path: "a", contents: some([120, 10]), mode: regular}, '
+            '{path: "b", contents: some([120, 10]), mode: regular}',
+            "Duplicate sources",
+        )
+        ambiguous_tip = commit_on(
+            "ambiguous.git", "main", ambiguous_base,
+            '{path: "a", contents: none, mode: regular}, '
+            '{path: "b", contents: none, mode: regular}, '
+            '{path: "c", contents: some([120, 10]), mode: regular}',
+            "Ambiguous rename",
+        )
+        error(
+            f'blame("/repos/ambiguous.git", "{ambiguous_tip}", "c", '
+            '{start-line: 1, max-lines: 100000, max-commits: 1000})',
+            "unsupported",
+        )
+        paired = ok(
+            f'diff-renames("/repos/ambiguous.git", "{ambiguous_base}", "{ambiguous_tip}", 1000)'
+        )
+        assert re.search(r'before: some\(\{path: "a".*after: some\(\{path: "c".*renamed: true', paired)
+        patch_git("repack", "-ad")
+        assert b1 in ok(blame_expression())
+        assert "renamed: true" in ok(f'diff-renames("/repos/patches", "{b2}", "{b3}", 1000)')
+        (patch_repo / "too-many-lines").write_bytes(b"x\n" * 100001)
+        oversized_text = patch_commit("Exceed text line bound")
+        error(blame_expression(file="too-many-lines", revision=oversized_text), "unsupported")
+        error(
+            f'unified-diff("/repos/patches", "{b4}", "{oversized_text}", '
+            '{context-lines: 3, max-files: 1000, max-bytes: 16777216, detect-renames: true})',
+            "unsupported",
+        )
+        patch_git("update-index", "--add", "--cacheinfo", f"160000,{b4},submodule")
+        patch_git("-c", "user.name=Oracle", "-c", "user.email=oracle@example.invalid",
+                  "commit", "--quiet", "-m", "Submodule fixture")
+        submodule_tip = patch_git("rev-parse", "HEAD")
+        error(
+            f'unified-diff("/repos/patches", "{oversized_text}", "{submodule_tip}", '
+            '{context-lines: 3, max-files: 1000, max-bytes: 16777216, detect-renames: true})',
+            "unsupported",
+        )
+
         fast_forward_repo = Path(directory) / "fast-forward.git"
         ok('init("/repos/fast-forward.git", "main")')
         ff_base = commit_on(
@@ -265,6 +473,11 @@ def main():
         merge_match = re.fullmatch(r'ok\(merged\("([0-9a-f]{40})"\)\)', merged)
         assert merge_match, merged
         merged_tip = merge_match.group(1)
+        error(
+            f'blame("/repos/divergent.git", "{merged_tip}", "base", '
+            '{start-line: 1, max-lines: 100000, max-commits: 1000})',
+            "unsupported",
+        )
         assert native_at(divergent_repo, "rev-parse", "refs/heads/main") == merged_tip
         assert native_at(divergent_repo, "show", "-s", "--format=%P", merged_tip).split() == [
             main_tip,
@@ -391,7 +604,7 @@ def main():
         )
         native_at(rebase_conflict_repo, "fsck", "--strict", "--full")
 
-    print("Git component: Wasm execution, merge/rebase, CAS writes, and Git interoperability passed.")
+    print("Git component: Wasm patches/blame, merge/rebase, CAS writes, and Git interoperability passed.")
 
 
 if __name__ == "__main__":
