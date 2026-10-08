@@ -59,15 +59,21 @@ def main():
         def native(*args):
             return run("git", f"--git-dir={repo}", *args)
 
-        def commit(parent, changes, message):
+        def native_at(repository, *args):
+            return run("git", f"--git-dir={repository}", *args)
+
+        def commit_on(repository_name, branch, parent, changes, message):
             expected = f"some({string(parent)})" if parent else "none"
             output = ok(
-                f'commit-files("/repos/agent.git", "main", {expected}, '
+                f'commit-files("/repos/{repository_name}", {string(branch)}, {expected}, '
                 f'[{changes}], {AUTHOR}, {string(message)})'
             )
             match = re.fullmatch(r'ok\("([0-9a-f]{40})"\)', output)
             assert match, output
             return match.group(1)
+
+        def commit(parent, changes, message):
+            return commit_on("agent.git", "main", parent, changes, message)
 
         ok('init("/repos/agent.git", "main")')
         error('init("/repos/agent.git", "main")', "repository")
@@ -203,7 +209,189 @@ def main():
         assert status == "?? untracked.txt", repr(status)
         native_worktree("fsck", "--strict", "--full")
 
-    print("Git component: Wasm execution, packed objects, CAS writes, and Git interoperability passed.")
+        fast_forward_repo = Path(directory) / "fast-forward.git"
+        ok('init("/repos/fast-forward.git", "main")')
+        ff_base = commit_on(
+            "fast-forward.git",
+            "main",
+            None,
+            '{path: "base", contents: some([98, 97, 115, 101]), mode: regular}',
+            "Base",
+        )
+        ok('create-branch("/repos/fast-forward.git", "topic", "HEAD")')
+        ff_topic = commit_on(
+            "fast-forward.git",
+            "topic",
+            ff_base,
+            '{path: "topic", contents: some([116, 111, 112, 105, 99]), mode: regular}',
+            "Topic",
+        )
+        ff = ok(
+            f'merge-branch("/repos/fast-forward.git", "main", "topic", '
+            f'"{ff_base}", "{ff_topic}", {AUTHOR}, "Fast-forward")'
+        )
+        assert ff == f"ok(fast-forward({string(ff_topic)}))", ff
+        assert native_at(fast_forward_repo, "rev-parse", "refs/heads/main") == ff_topic
+        native_at(fast_forward_repo, "fsck", "--strict", "--full")
+
+        divergent_repo = Path(directory) / "divergent.git"
+        ok('init("/repos/divergent.git", "main")')
+        merge_base = commit_on(
+            "divergent.git",
+            "main",
+            None,
+            '{path: "base", contents: some([98, 97, 115, 101]), mode: regular}',
+            "Base",
+        )
+        ok('create-branch("/repos/divergent.git", "topic", "HEAD")')
+        main_tip = commit_on(
+            "divergent.git",
+            "main",
+            merge_base,
+            '{path: "main", contents: some([109, 97, 105, 110]), mode: regular}',
+            "Main",
+        )
+        topic_tip = commit_on(
+            "divergent.git",
+            "topic",
+            merge_base,
+            '{path: "topic", contents: some([116, 111, 112, 105, 99]), mode: regular}',
+            "Topic",
+        )
+        merged = ok(
+            f'merge-branch("/repos/divergent.git", "main", "topic", '
+            f'"{main_tip}", "{topic_tip}", {AUTHOR}, "Merge topic")'
+        )
+        merge_match = re.fullmatch(r'ok\(merged\("([0-9a-f]{40})"\)\)', merged)
+        assert merge_match, merged
+        merged_tip = merge_match.group(1)
+        assert native_at(divergent_repo, "rev-parse", "refs/heads/main") == merged_tip
+        assert native_at(divergent_repo, "show", "-s", "--format=%P", merged_tip).split() == [
+            main_tip,
+            topic_tip,
+        ]
+        error(
+            f'merge-branch("/repos/divergent.git", "main", "topic", "{merge_base}", '
+            f'"{topic_tip}", {AUTHOR}, "Stale merge")',
+            "conflict",
+        )
+        assert native_at(divergent_repo, "rev-parse", "refs/heads/main") == merged_tip
+        native_at(divergent_repo, "fsck", "--strict", "--full")
+
+        conflict_repo = Path(directory) / "merge-conflict.git"
+        ok('init("/repos/merge-conflict.git", "main")')
+        conflict_base = commit_on(
+            "merge-conflict.git",
+            "main",
+            None,
+            '{path: "file", contents: some([98, 97, 115, 101]), mode: regular}',
+            "Base",
+        )
+        ok('create-branch("/repos/merge-conflict.git", "topic", "HEAD")')
+        conflict_main = commit_on(
+            "merge-conflict.git",
+            "main",
+            conflict_base,
+            '{path: "file", contents: some([109, 97, 105, 110]), mode: regular}',
+            "Main",
+        )
+        conflict_topic = commit_on(
+            "merge-conflict.git",
+            "topic",
+            conflict_base,
+            '{path: "file", contents: some([116, 111, 112, 105, 99]), mode: regular}',
+            "Topic",
+        )
+        conflict = ok(
+            f'merge-branch("/repos/merge-conflict.git", "main", "topic", '
+            f'"{conflict_main}", "{conflict_topic}", {AUTHOR}, "Conflict")'
+        )
+        assert "conflicts" in conflict and 'path: "file"' in conflict, conflict
+        assert native_at(conflict_repo, "rev-parse", "refs/heads/main") == conflict_main
+        native_at(conflict_repo, "fsck", "--strict", "--full")
+
+        rebase_repo = Path(directory) / "rebase.git"
+        ok('init("/repos/rebase.git", "main")')
+        rebase_base = commit_on(
+            "rebase.git",
+            "main",
+            None,
+            '{path: "base", contents: some([98, 97, 115, 101]), mode: regular}',
+            "Base",
+        )
+        ok('create-branch("/repos/rebase.git", "topic", "HEAD")')
+        original_topic = commit_on(
+            "rebase.git",
+            "topic",
+            rebase_base,
+            '{path: "topic", contents: some([116, 111, 112, 105, 99]), mode: regular}',
+            "Topic",
+        )
+        rebase_onto = commit_on(
+            "rebase.git",
+            "main",
+            rebase_base,
+            '{path: "main", contents: some([109, 97, 105, 110]), mode: regular}',
+            "Main",
+        )
+        committer = '{name: "Rebaser", email: "rebaser@example.invalid", seconds: 1800000000, offset: 0}'
+        rebased = ok(
+            f'rebase-branch("/repos/rebase.git", "topic", "{original_topic}", '
+            f'"{rebase_onto}", {committer})'
+        )
+        rebase_match = re.search(r'tip: "([0-9a-f]{40})"', rebased)
+        assert rebase_match and "rebased" in rebased, rebased
+        rebased_tip = rebase_match.group(1)
+        assert native_at(rebase_repo, "rev-parse", "refs/heads/topic") == rebased_tip
+        assert native_at(rebase_repo, "show", "-s", "--format=%P", rebased_tip) == rebase_onto
+        assert native_at(rebase_repo, "show", "-s", "--format=%cn%x00%ce", rebased_tip) == (
+            "Rebaser\x00rebaser@example.invalid"
+        )
+        error(
+            f'rebase-branch("/repos/rebase.git", "topic", "{original_topic}", '
+            f'"{original_topic}", {committer})',
+            "conflict",
+        )
+        assert native_at(rebase_repo, "rev-parse", "refs/heads/topic") == rebased_tip
+        native_at(rebase_repo, "fsck", "--strict", "--full")
+
+        rebase_conflict_repo = Path(directory) / "rebase-conflict.git"
+        ok('init("/repos/rebase-conflict.git", "main")')
+        rebase_conflict_base = commit_on(
+            "rebase-conflict.git",
+            "main",
+            None,
+            '{path: "file", contents: some([98, 97, 115, 101]), mode: regular}',
+            "Base",
+        )
+        ok('create-branch("/repos/rebase-conflict.git", "topic", "HEAD")')
+        rebase_conflict_topic = commit_on(
+            "rebase-conflict.git",
+            "topic",
+            rebase_conflict_base,
+            '{path: "file", contents: some([116, 111, 112, 105, 99]), mode: regular}',
+            "Topic",
+        )
+        rebase_conflict_onto = commit_on(
+            "rebase-conflict.git",
+            "main",
+            rebase_conflict_base,
+            '{path: "file", contents: some([109, 97, 105, 110]), mode: regular}',
+            "Main",
+        )
+        rebase_conflict = ok(
+            f'rebase-branch("/repos/rebase-conflict.git", "topic", '
+            f'"{rebase_conflict_topic}", "{rebase_conflict_onto}", {committer})'
+        )
+        assert "conflicts" in rebase_conflict, rebase_conflict
+        assert rebase_conflict_topic in rebase_conflict and 'paths: ["file"]' in rebase_conflict, rebase_conflict
+        assert (
+            native_at(rebase_conflict_repo, "rev-parse", "refs/heads/topic")
+            == rebase_conflict_topic
+        )
+        native_at(rebase_conflict_repo, "fsck", "--strict", "--full")
+
+    print("Git component: Wasm execution, merge/rebase, CAS writes, and Git interoperability passed.")
 
 
 if __name__ == "__main__":

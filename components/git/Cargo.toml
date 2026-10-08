@@ -13,7 +13,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-gix = { version = "=0.88.0", default-features = false, features = ["sha1", "revision", "dirwalk"] }
+gix = { version = "=0.88.0", default-features = false, features = ["sha1", "revision", "dirwalk", "merge"] }
 filetime = "=0.2.29"
 wit-bindgen = "=0.57.1"
 

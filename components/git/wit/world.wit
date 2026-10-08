@@ -70,6 +70,43 @@ interface repository {
         untracked: bool,
     }
 
+    /// An unresolved path reported by a merge.
+    record merge-conflict {
+        path: string,
+    }
+
+    /// The commit replay and paths that prevented a rebase from completing.
+    record rebase-conflict {
+        commit: string,
+        paths: list<string>,
+    }
+
+    /// The final tip and rewritten commit identifiers after a rebase.
+    record rebase-success {
+        tip: string,
+        commits: list<string>,
+    }
+
+    /// The result of merging two branches.
+    variant merge-result {
+        /// The source was already contained in the target.
+        up-to-date(string),
+        /// The target was advanced directly to the source tip.
+        fast-forward(string),
+        /// A two-parent merge commit was created.
+        merged(string),
+        /// No reference was updated because these paths need resolution.
+        conflicts(list<merge-conflict>),
+    }
+
+    /// The result of replaying a branch onto a new base.
+    variant rebase-result {
+        /// The branch was updated and commits lists the rewritten commits in replay order.
+        rebased(rebase-success),
+        /// No reference was updated because this commit could not be replayed cleanly.
+        conflicts(rebase-conflict),
+    }
+
     /// All failures are returned explicitly, including corrupt repositories.
     variant error {
         invalid-input(string),
@@ -141,6 +178,34 @@ interface repository {
         author: signature,
         message: string,
     ) -> result<string, error>;
+
+    /// Merge source-branch into target-branch using fast-forward or three-way semantics.
+    /// Both expected tips are full object identifiers. Histories are bounded to 1000
+    /// reachable commits per tip. Conflicts return affected paths without updating the
+    /// target reference. Writes require a bare repository.
+    merge-branch: func(
+        path: string,
+        target-branch: string,
+        source-branch: string,
+        expected-target-tip: string,
+        expected-source-tip: string,
+        committer: signature,
+        message: string,
+    ) -> result<merge-result, error>;
+
+    /// Replay the linear history of branch onto new-base, preserving authors and messages
+    /// and using the supplied committer for every rewritten commit. expected-tip is the
+    /// branch's current full object identifier; new-base is a full commit identifier.
+    /// Conflicts include the source commit and paths and never update the branch reference.
+    /// At most 1000 commits are replayed; merge commits are unsupported. Writes require
+    /// a bare repository.
+    rebase-branch: func(
+        path: string,
+        branch: string,
+        expected-tip: string,
+        new-base: string,
+        committer: signature,
+    ) -> result<rebase-result, error>;
 }
 
 /// A callable Git client, requiring only standard WASI capabilities.
