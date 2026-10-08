@@ -10,12 +10,21 @@
 wit_bindgen::generate!({
     world: "git",
     path: "wit",
+    with: {
+        "wasi:http/outgoing-handler@0.2.0": wasi::http::outgoing_handler,
+        "wasi:http/types@0.2.0": wasi::http::types,
+        "wasi:io/error@0.2.0": wasi::io::error,
+        "wasi:io/poll@0.2.0": wasi::io::poll,
+        "wasi:io/streams@0.2.0": wasi::io::streams,
+        "wasi:clocks/monotonic-clock@0.2.0": wasi::clocks::monotonic_clock,
+    },
 });
 
 use exports::yoshuawuyts::git::repository::{
-    BlameLine, BlameOptions, Change, ChangeKind, CommitRecord, Difference, Entry, Error,
-    FileDifference, FileMode, FilePatch, FileStatus, Guest, MergeConflict, MergeResult,
-    PatchOptions, RebaseConflict, RebaseResult, RebaseSuccess, Reference, Signature,
+    BlameLine, BlameOptions, Change, ChangeKind, CloneResult, CommitRecord, Difference, Entry,
+    Error, FetchResult, FileDifference, FileMode, FilePatch, FileStatus, Guest, MergeConflict,
+    MergeResult, NetworkCredentials, NetworkError, NetworkOptions, PatchOptions, RebaseConflict,
+    RebaseResult, RebaseSuccess, Reference, Signature,
 };
 use gix::bstr::ByteSlice;
 use std::collections::{BTreeMap, BTreeSet};
@@ -25,6 +34,7 @@ const MAX_ENTRIES: usize = 100_000;
 const MAX_DEPTH: usize = 128;
 const MAX_HISTORY: usize = 1000;
 
+mod network;
 mod patches;
 
 /// Native entry point, also exported through the component's WIT interface.
@@ -35,6 +45,21 @@ pub struct Component;
 export!(Component);
 
 impl Guest for Component {
+    fn clone(
+        path: String,
+        url: String,
+        remote_name: String,
+        options: NetworkOptions,
+    ) -> Result<CloneResult, Error> {
+        network::clone_repository(&path, &url, &remote_name, &options)
+    }
+    fn fetch(
+        path: String,
+        remote_name: String,
+        options: NetworkOptions,
+    ) -> Result<FetchResult, Error> {
+        network::fetch_repository(&path, &remote_name, &options)
+    }
     fn init(path: String, branch: String) -> Result<(), Error> {
         let name = branch_name(&branch)?;
         validate_repository_path(&path)?;

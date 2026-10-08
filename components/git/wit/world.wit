@@ -133,6 +133,55 @@ interface repository {
         commits: list<string>,
     }
 
+    /// Credentials supplied for one network operation. They are never read from or written to the environment or Git config.
+    record network-credentials {
+        /// Username for HTTP Basic authentication; must be paired with `password`.
+        username: option<string>,
+        /// Password for HTTP Basic authentication; must be paired with `username`.
+        password: option<string>,
+        /// Bearer token for HTTP authentication; mutually exclusive with Basic credentials.
+        bearer-token: option<string>,
+    }
+
+    /// Bounds and optional explicit authentication for one smart-HTTP operation.
+    record network-options {
+        /// Maximum total bytes in any HTTP response, including protocol framing; 1..=268435456.
+        max-response-bytes: u64,
+        /// Maximum decoded pack bytes; 1..=268435456. Packs are also limited to
+        /// 1,000,000 objects.
+        max-pack-bytes: u64,
+        /// Maximum remote references to accept; 1..=100000.
+        max-refs: u32,
+        /// Exact hostnames this operation may contact; no wildcards or implicit hosts.
+        /// The WASI HTTP runtime must separately grant outgoing network access.
+        allowed-hosts: list<string>,
+        /// Optional credentials used only for this call.
+        credentials: option<network-credentials>,
+    }
+
+    /// The result of cloning a remote into a bare repository.
+    record clone-result {
+        /// The advertised default branch, without the `refs/heads/` prefix.
+        default-branch: string,
+        /// Remote branches and tags installed by the clone.
+        references: list<reference>,
+    }
+
+    /// The result of fetching remote references.
+    record fetch-result {
+        /// Remote-tracking branches updated and tags newly created by this fetch.
+        updated: list<reference>,
+    }
+
+    /// A network-specific failure. Messages never include credentials or authorization headers.
+    variant network-error {
+        authentication-required,
+        http-status(u16),
+        response-too-large,
+        malformed-response(string),
+        transport-failure,
+    }
+
     /// The result of merging two branches.
     variant merge-result {
         /// The source was already contained in the target.
@@ -159,6 +208,7 @@ interface repository {
         repository(string),
         unsupported(string),
         conflict(string),
+        network(network-error),
     }
 
     /// Initialize a new bare repository. Refuses an existing destination.
@@ -270,9 +320,31 @@ interface repository {
         new-base: string,
         committer: signature,
     ) -> result<rebase-result, error>;
+
+    /// Clone a smart-HTTP(S) remote into a new bare repository.
+    /// Only `http` and `https` URLs without userinfo are accepted. Authentication is explicit.
+    /// The URL hostname must be listed in `options.allowed-hosts`; the WASI HTTP
+    /// runtime must independently grant network access. Responses, references,
+    /// and packs are bounded by `options`; pack checksums and objects are verified.
+    clone: func(
+        path: string,
+        url: string,
+        remote-name: string,
+        options: network-options,
+    ) -> result<clone-result, error>;
+
+    /// Fetch from a configured remote in a bare repository and update only its remote-tracking
+    /// refs (plus missing tags). Local branches and working-tree files are never changed.
+    /// Ref updates use lock-file CAS.
+    fetch: func(
+        path: string,
+        remote-name: string,
+        options: network-options,
+    ) -> result<fetch-result, error>;
 }
 
 /// A callable Git client, requiring only standard WASI capabilities.
 world git {
+    import wasi:http/outgoing-handler@0.2.0;
     export repository;
 }
