@@ -15,6 +15,7 @@ on:
           - acp
           - color
           - slidedeck
+          - git
       version:
         description: "Version to publish (e.g. 1.2.0)"
         required: true
@@ -25,7 +26,7 @@ env:
 
 jobs:
   publish-component:
-    if: ${{ inputs.target == 'wordmark' || inputs.target == 'tablemark' || inputs.target == 'textsearch' || inputs.target == 'color' || inputs.target == 'slidedeck' }}
+    if: ${{ inputs.target == 'wordmark' || inputs.target == 'tablemark' || inputs.target == 'textsearch' || inputs.target == 'color' || inputs.target == 'slidedeck' || inputs.target == 'git' }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -51,6 +52,7 @@ jobs:
             textsearch) desc="Regex find/replace over text, powered by ripgrep's engine" ;;
             color)      desc="Convert between CSS color spaces (sRGB, HSL, HWB, Lab, LCH, Oklab, Oklch, Okhsl)" ;;
             slidedeck)  desc="Generate PowerPoint (.pptx) presentations from slide descriptions or Markdown" ;;
+            git)        desc="Self-contained local Git repository operations for Wasm agents" ;;
             *) echo "Unknown component: ${COMPONENT_NAME}" >&2; exit 1 ;;
           esac
           echo "COMPONENT_DESCRIPTION=${desc}" >> "$GITHUB_ENV"
@@ -84,12 +86,12 @@ jobs:
         run: rustup target add wasm32-wasip2
 
       - name: Set component WIT package version
-        # `color` and `slidedeck` declare versioned WIT packages
+        # `color`, `slidedeck` and `git` declare versioned WIT packages
         # (`yoshuawuyts:<name>@<version>`), and that version becomes the
         # exported interface identity. Rewrite it to match the published
         # version so consumers importing e.g.
         # `yoshuawuyts:color/conversion@<version>` resolve.
-        if: ${{ inputs.target == 'color' || inputs.target == 'slidedeck' }}
+        if: ${{ inputs.target == 'color' || inputs.target == 'slidedeck' || inputs.target == 'git' }}
         run: |
           for f in components/${COMPONENT_NAME}/wit/*.wit; do
             sed -i -E "s/^(package [a-z0-9-]+:[a-z0-9-]+)(@[^;]*)?;/\1@${{ inputs.version }};/" "$f"
