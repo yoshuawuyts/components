@@ -20,6 +20,8 @@ CLI. It supports SHA-1 bare and working repositories:
 | `diff` | Compare two trees by path, object ID and file mode |
 | `create-branch` | Create a branch without replacing an existing ref |
 | `commit-files` | Commit explicit additions, replacements and deletions with optimistic concurrency |
+| `merge-branch` | Fast-forward or three-way merge branches with conflict-path reporting |
+| `rebase-branch` | Replay bounded linear history with an explicit committer signature |
 | `checkout` | Switch a working repository to a branch or commit |
 | `status` | Report staged, unstaged, and non-ignored untracked paths |
 | `add` / `remove` / `reset` | Update the working repository's index |
@@ -31,7 +33,27 @@ bare-repository operations; working-tree operations require a non-bare
 repository. Working-tree commits use the index and update only the checked-out
 local branch, with an expected-parent compare-and-swap.
 
-**Not implemented:** network clone/fetch/push, SSH, credentials, merge/rebase,
+`merge-branch` and `rebase-branch` write only bare repositories. They never
+change a working tree or index, and reject non-bare repositories rather than
+risk staged, unstaged, untracked, or ignored work. Both operations require
+expected full object IDs and update the target branch with the same lock-file,
+recheck, and atomic-rename compare-and-swap used by commits. A stale tip fails
+without updating a reference. A failed or interrupted operation may leave
+unreachable objects, but never points a branch at a partial result.
+
+Merges fast-forward when possible and otherwise use gitoxide's three-way tree
+merge. Each input history is bounded to 1,000 reachable commits. Unresolved
+conflicts return their repository-relative paths and do not advance the target
+branch. The supplied signature is used as both author and committer for a merge
+commit. Rebases replay at most 1,000 non-merge commits, preserving each original
+author and raw message while using the supplied committer signature for every
+rewritten commit. An unresolved replay returns the original commit ID and
+conflicting paths; the branch remains at its original tip. Merge and rebase
+reject `.gitattributes`, configured attribute files, external merge drivers,
+external filters, and submodule entries rather than invoking or emulating them.
+They do not run hooks or write reflogs.
+
+**Not implemented:** network clone/fetch/push, SSH, credentials, arbitrary
 text patches, rename detection, Git LFS, SHA-256 repositories, signing, hooks,
 filters, and reflogs. Checkout does not recurse into submodules; sparse checkout
 and split indexes are unsupported. On WASI, executable permission bits cannot
@@ -99,6 +121,11 @@ the branch before retrying. Existing locks are never removed. Hooks and
 external filters are not run. No reflog is written. Committing to another branch
 does not change symbolic `HEAD`.
 
+Branch merge and rebase use the same compare-and-swap ref update. Merge requires
+both observed branch tips; rebase requires the observed branch tip and an exact
+commit ID for its new base. Neither operation accepts an implicit `HEAD` or
+updates a working repository's index or files.
+
 Duplicate/overlapping paths, traversal paths, `.git` components, nonexistent
 deletions, replacing directories, and no-op commits are rejected. Deleting the
 last file is supported. `add`, `remove`, and `reset` require explicit paths and
@@ -150,6 +177,7 @@ just test-git
 
 `test-git` builds and validates the real component, executes it in Wasmtime, and
 uses native Git **only in the test harness** as a fixture builder and format
-oracle. It covers binary files, file modes, branch conflicts, held locks, denied
-filesystem access, packed objects/refs, commit graphs, writes after packing, and
-`git fsck --strict` interoperability.
+oracle. It covers binary files, file modes, branch conflicts, merge and rebase
+success/conflicts/stale tips, held locks, denied filesystem access, packed
+objects/refs, commit graphs, writes after packing, and `git fsck --strict`
+interoperability.

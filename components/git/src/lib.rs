@@ -14,7 +14,7 @@ wit_bindgen::generate!({
 
 use exports::yoshuawuyts::git::repository::{
     Change, ChangeKind, CommitRecord, Difference, Entry, Error, FileMode, FileStatus, Guest,
-    Reference, Signature,
+    MergeConflict, MergeResult, RebaseConflict, RebaseResult, RebaseSuccess, Reference, Signature,
 };
 use gix::bstr::ByteSlice;
 use std::collections::{BTreeMap, BTreeSet};
@@ -22,6 +22,7 @@ use std::collections::{BTreeMap, BTreeSet};
 const MAX_BLOB_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ENTRIES: usize = 100_000;
 const MAX_DEPTH: usize = 128;
+const MAX_HISTORY: usize = 1000;
 
 /// Native entry point, also exported through the component's WIT interface.
 #[derive(Debug)]
@@ -521,6 +522,191 @@ impl Guest for Component {
             .map_err(repository_error)?;
         update_branch(&repo, &name, commit.id, parent)?;
         Ok(commit.id.to_string())
+    }
+    fn merge_branch(
+        path: String,
+        target_branch: String,
+        source_branch: String,
+        expected_target_tip: String,
+        expected_source_tip: String,
+        committer: Signature,
+        message: String,
+    ) -> Result<MergeResult, Error> {
+        let target_name = branch_name(&target_branch)?;
+        let source_name = branch_name(&source_branch)?;
+        let committer = encode_signature(committer)?;
+        validate_commit_message(&message)?;
+        let repo = open_bare(&path)?;
+        let target_tip = branch_tip(&repo, &target_name)?;
+        let source_tip = branch_tip(&repo, &source_name)?;
+        let expected_target = full_object_id(&expected_target_tip)?;
+        let expected_source = full_object_id(&expected_source_tip)?;
+        if target_tip != expected_target || source_tip != expected_source {
+            return Err(Error::Conflict(
+                "branch tip changed; reread both branch tips before retrying".into(),
+            ));
+        }
+        ensure_bounded_history(&repo, target_tip)?;
+        ensure_bounded_history(&repo, source_tip)?;
+
+        if is_ancestor(&repo, target_tip, source_tip)? {
+            if target_tip == source_tip {
+                return Ok(MergeResult::UpToDate(target_tip.to_string()));
+            }
+            update_branch(&repo, &target_name, source_tip, Some(target_tip))?;
+            return Ok(MergeResult::FastForward(source_tip.to_string()));
+        }
+        if is_ancestor(&repo, source_tip, target_tip)? {
+            return Ok(MergeResult::UpToDate(target_tip.to_string()));
+        }
+
+        let target_tree = commit_tree(&repo, target_tip)?;
+        let source_tree = commit_tree(&repo, source_tip)?;
+        ensure_merge_supported(&repo, &[target_tree, source_tree])?;
+        let options = repo.tree_merge_options().map_err(repository_error)?;
+        let mut outcome = repo
+            .merge_commits(
+                target_tip,
+                source_tip,
+                gix::merge::blob::builtin_driver::text::Labels::default(),
+                options.into(),
+            )
+            .map_err(repository_error)?;
+        let conflicts = unresolved_conflicts(outcome.tree_merge.conflicts.as_slice())?;
+        if !conflicts.is_empty() {
+            return Ok(MergeResult::Conflicts(conflicts));
+        }
+        let tree = outcome
+            .tree_merge
+            .tree
+            .write()
+            .map_err(repository_error)?
+            .detach();
+        ensure_merge_supported(&repo, &[tree])?;
+        let mut time = gix::date::parse::TimeBuf::default();
+        let committer_ref = committer.to_ref(&mut time);
+        let commit = repo
+            .new_commit_as(
+                committer_ref,
+                committer_ref,
+                message,
+                tree,
+                [target_tip, source_tip],
+            )
+            .map_err(repository_error)?;
+        update_branch(&repo, &target_name, commit.id, Some(target_tip))?;
+        Ok(MergeResult::Merged(commit.id.to_string()))
+    }
+    fn rebase_branch(
+        path: String,
+        branch: String,
+        expected_tip: String,
+        new_base: String,
+        committer: Signature,
+    ) -> Result<RebaseResult, Error> {
+        let name = branch_name(&branch)?;
+        let committer = encode_signature(committer)?;
+        let repo = open_bare(&path)?;
+        let tip = branch_tip(&repo, &name)?;
+        let expected_tip = full_object_id(&expected_tip)?;
+        let base = full_object_id(&new_base)?;
+        if tip != expected_tip {
+            return Err(Error::Conflict(
+                "branch tip changed; reread it before retrying".into(),
+            ));
+        }
+        repo.find_commit(base).map_err(repository_error)?;
+        ensure_bounded_history(&repo, tip)?;
+        ensure_bounded_history(&repo, base)?;
+        let merge_base = repo
+            .merge_base(tip, base)
+            .map(gix::Id::detach)
+            .map_err(repository_error)?;
+
+        let mut replay = Vec::new();
+        let mut current = tip;
+        while current != merge_base {
+            if replay.len() == 1000 {
+                return Err(Error::Unsupported("rebase exceeds 1000 commits".into()));
+            }
+            let commit = repo.find_commit(current).map_err(repository_error)?;
+            let parents: Vec<_> = commit.parent_ids().map(gix::Id::detach).collect();
+            if parents.len() > 1 {
+                return Err(Error::Unsupported(
+                    "rebasing merge commits is not supported".into(),
+                ));
+            }
+            let Some(parent) = parents.first().copied() else {
+                return Err(Error::Unsupported(
+                    "merge base is not on the branch's first-parent history".into(),
+                ));
+            };
+            replay.push(current);
+            current = parent;
+        }
+        replay.reverse();
+
+        let mut rebased_tip = base;
+        let mut rewritten = Vec::with_capacity(replay.len());
+        for original_id in replay {
+            let original = repo.find_commit(original_id).map_err(repository_error)?;
+            let parent = original
+                .parent_ids()
+                .next()
+                .map(gix::Id::detach)
+                .ok_or_else(|| Error::Repository("rebase commit has no parent".into()))?;
+            let base_tree = commit_tree(&repo, parent)?;
+            let our_tree = commit_tree(&repo, rebased_tip)?;
+            let their_tree = commit_tree(&repo, original_id)?;
+            ensure_merge_supported(&repo, &[base_tree, our_tree, their_tree])?;
+            let options = repo.tree_merge_options().map_err(repository_error)?;
+            let mut outcome = repo
+                .merge_trees(
+                    base_tree,
+                    our_tree,
+                    their_tree,
+                    gix::merge::blob::builtin_driver::text::Labels::default(),
+                    options,
+                )
+                .map_err(repository_error)?;
+            let conflicts = unresolved_conflicts(outcome.conflicts.as_slice())?;
+            if !conflicts.is_empty() {
+                return Ok(RebaseResult::Conflicts(RebaseConflict {
+                    commit: original_id.to_string(),
+                    paths: conflicts
+                        .into_iter()
+                        .map(|conflict| conflict.path)
+                        .collect(),
+                }));
+            }
+            let tree = outcome.tree.write().map_err(repository_error)?.detach();
+            ensure_merge_supported(&repo, &[tree])?;
+            let author = original.author().map_err(repository_error)?;
+            let message = original.message_raw().map_err(repository_error)?.to_owned();
+            let mut time = gix::date::parse::TimeBuf::default();
+            let committer_ref = committer.to_ref(&mut time);
+            let commit = repo
+                .write_object(gix::objs::Commit {
+                    message,
+                    tree,
+                    author: author.into(),
+                    committer: committer_ref.into(),
+                    encoding: None,
+                    parents: vec![rebased_tip].into(),
+                    extra_headers: Vec::default(),
+                })
+                .map_err(repository_error)?;
+            rebased_tip = commit.detach();
+            rewritten.push(rebased_tip.to_string());
+        }
+
+        if rebased_tip != tip {
+            update_branch(&repo, &name, rebased_tip, Some(tip))?;
+        }
+        Ok(RebaseResult::Rebased(RebaseSuccess {
+            tip: rebased_tip.to_string(),
+            commits: rewritten,
+        }))
     }
 }
 
@@ -1114,6 +1300,166 @@ fn open_bare(path: &str) -> Result<gix::Repository, Error> {
         ));
     }
     Ok(repo)
+}
+
+fn validate_commit_message(message: &str) -> Result<(), Error> {
+    if message.trim().is_empty() || message.contains('\0') {
+        return Err(Error::InvalidInput(
+            "commit message must be nonempty and contain no NUL".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn full_object_id(value: &str) -> Result<gix::ObjectId, Error> {
+    if value.len() != 40 {
+        return Err(Error::InvalidInput(
+            "expected a full 40-character SHA-1 object identifier".into(),
+        ));
+    }
+    gix::ObjectId::from_hex(value.as_bytes()).map_err(invalid_input)
+}
+
+fn branch_tip(repo: &gix::Repository, name: &str) -> Result<gix::ObjectId, Error> {
+    let reference = repo
+        .try_find_reference(name)
+        .map_err(repository_error)?
+        .ok_or_else(|| Error::InvalidInput(format!("branch does not exist: {name}")))?;
+    let id = reference
+        .try_id()
+        .map(gix::Id::detach)
+        .ok_or_else(|| Error::Unsupported(format!("branch is not a direct reference: {name}")))?;
+    let commit = repo.find_commit(id).map_err(repository_error)?;
+    Ok(commit.id)
+}
+
+fn commit_tree(repo: &gix::Repository, id: gix::ObjectId) -> Result<gix::ObjectId, Error> {
+    repo.find_commit(id)
+        .map_err(repository_error)?
+        .tree_id()
+        .map(gix::Id::detach)
+        .map_err(repository_error)
+}
+
+fn bounded_ancestors(
+    repo: &gix::Repository,
+    tip: gix::ObjectId,
+) -> Result<BTreeSet<gix::ObjectId>, Error> {
+    let mut pending = vec![tip];
+    let mut visited = BTreeSet::new();
+    while let Some(id) = pending.pop() {
+        if !visited.insert(id) {
+            continue;
+        }
+        if visited.len() > MAX_HISTORY {
+            return Err(Error::Unsupported(
+                "branch history exceeds the 1000-commit work limit".into(),
+            ));
+        }
+        let commit = repo.find_commit(id).map_err(repository_error)?;
+        pending.extend(commit.parent_ids().map(gix::Id::detach));
+    }
+    Ok(visited)
+}
+
+fn ensure_bounded_history(repo: &gix::Repository, tip: gix::ObjectId) -> Result<(), Error> {
+    bounded_ancestors(repo, tip).map(|_| ())
+}
+
+fn is_ancestor(
+    repo: &gix::Repository,
+    ancestor: gix::ObjectId,
+    descendant: gix::ObjectId,
+) -> Result<bool, Error> {
+    Ok(bounded_ancestors(repo, descendant)?.contains(&ancestor))
+}
+
+fn ensure_merge_supported(repo: &gix::Repository, trees: &[gix::ObjectId]) -> Result<(), Error> {
+    for tree in trees {
+        let entries = entries(repo, *tree)?;
+        let mut total_bytes = 0_usize;
+        for entry in entries.values() {
+            if entry.path == ".gitattributes" || entry.path.ends_with("/.gitattributes") {
+                return Err(Error::Unsupported(
+                    "merge attributes and filters are not supported".into(),
+                ));
+            }
+            if entry.mode == 0o160_000 {
+                return Err(Error::Unsupported(
+                    "merging submodule entries is not supported".into(),
+                ));
+            }
+            let id = gix::ObjectId::from_hex(entry.id.as_bytes()).map_err(invalid_input)?;
+            let blob = repo.find_blob(id).map_err(repository_error)?;
+            total_bytes = total_bytes.saturating_add(blob.data.len());
+            if blob.data.len() > MAX_BLOB_BYTES || total_bytes > MAX_BLOB_BYTES {
+                return Err(Error::Unsupported(
+                    "merge tree contents exceed the 16 MiB limit".into(),
+                ));
+            }
+        }
+    }
+
+    let config = repo.config_snapshot();
+    if config.string("core.attributesFile").is_some() {
+        return Err(Error::Unsupported(
+            "configured attribute files are not supported for merge or rebase".into(),
+        ));
+    }
+    match std::fs::symlink_metadata(repo.git_dir().join("info/attributes")) {
+        Ok(_) => {
+            return Err(Error::Unsupported(
+                "repository attribute files are not supported for merge or rebase".into(),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(repository_error(error)),
+    }
+    for section in config
+        .plumbing()
+        .sections_by_name("merge")
+        .into_iter()
+        .flatten()
+    {
+        if section.header().subsection_name().is_some() && section.value("driver").is_some() {
+            return Err(Error::Unsupported(
+                "external merge drivers are not supported".into(),
+            ));
+        }
+    }
+    for section in config
+        .plumbing()
+        .sections_by_name("filter")
+        .into_iter()
+        .flatten()
+    {
+        if ["clean", "smudge", "process"]
+            .iter()
+            .any(|key| section.value(key).is_some())
+        {
+            return Err(Error::Unsupported(
+                "external filters are not supported".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn unresolved_conflicts(
+    conflicts: &[gix::merge::tree::Conflict],
+) -> Result<Vec<MergeConflict>, Error> {
+    let mut paths = BTreeSet::new();
+    for conflict in conflicts {
+        if conflict.is_unresolved(gix::merge::tree::TreatAsUnresolved::default()) {
+            let (ours, theirs) = conflict.changes_in_resolution();
+            paths.insert(utf8(ours.location())?);
+            paths.insert(utf8(theirs.location())?);
+        }
+    }
+    Ok(paths
+        .into_iter()
+        .map(|path| MergeConflict { path })
+        .collect())
 }
 
 fn branch_name(branch: &str) -> Result<String, Error> {

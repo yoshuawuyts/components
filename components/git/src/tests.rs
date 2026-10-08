@@ -25,9 +25,13 @@ fn repo() -> (tempfile::TempDir, String) {
 }
 
 fn commit(path: &str, parent: Option<String>, changes: Vec<Change>) -> String {
+    commit_branch(path, "main", parent, changes)
+}
+
+fn commit_branch(path: &str, branch: &str, parent: Option<String>, changes: Vec<Change>) -> String {
     Component::commit_files(
         path.into(),
-        "main".into(),
+        branch.into(),
         parent,
         changes,
         author(),
@@ -383,6 +387,29 @@ fn working_tree_staging_status_commit_and_checkout() {
     let file = std::path::Path::new(&path).join("file");
     std::fs::write(&file, b"uncommitted edit\n").unwrap();
     assert!(matches!(
+        Component::merge_branch(
+            path.clone(),
+            "main".into(),
+            "main".into(),
+            second.clone(),
+            second.clone(),
+            author(),
+            "Merge in a working tree\n".into(),
+        ),
+        Err(Error::Unsupported(_))
+    ));
+    assert!(matches!(
+        Component::rebase_branch(
+            path.clone(),
+            "main".into(),
+            second.clone(),
+            second.clone(),
+            author(),
+        ),
+        Err(Error::Unsupported(_))
+    ));
+    assert_eq!(std::fs::read(&file).unwrap(), b"uncommitted edit\n");
+    assert!(matches!(
         Component::remove(path.clone(), vec!["file".into()]),
         Err(Error::Conflict(_))
     ));
@@ -409,4 +436,236 @@ fn working_tree_staging_status_commit_and_checkout() {
             .iter()
             .any(|item| item.path == "new" && item.untracked)
     );
+}
+
+#[test]
+fn merge_branches_support_fast_forward_divergence_conflicts_and_cas() {
+    let (_dir, path) = repo();
+    let base = commit(
+        &path,
+        None,
+        vec![change("base", Some(b"base\n"), FileMode::Regular)],
+    );
+    Component::create_branch(path.clone(), "topic".into(), "HEAD".into()).unwrap();
+    let topic = commit_branch(
+        &path,
+        "topic",
+        Some(base.clone()),
+        vec![change("topic", Some(b"topic\n"), FileMode::Regular)],
+    );
+
+    assert!(matches!(
+        Component::merge_branch(
+            path.clone(),
+            "main".into(),
+            "topic".into(),
+            base.clone(),
+            topic.clone(),
+            author(),
+            "Fast-forward\n".into(),
+        )
+        .unwrap(),
+        MergeResult::FastForward(id) if id == topic
+    ));
+    assert_eq!(
+        Component::resolve(path.clone(), "main".into()).unwrap(),
+        topic
+    );
+
+    let (_dir, path) = repo();
+    let base = commit(
+        &path,
+        None,
+        vec![change("base", Some(b"base\n"), FileMode::Regular)],
+    );
+    Component::create_branch(path.clone(), "topic".into(), "HEAD".into()).unwrap();
+    let main = commit(
+        &path,
+        Some(base.clone()),
+        vec![change("main", Some(b"main\n"), FileMode::Regular)],
+    );
+    let topic = commit_branch(
+        &path,
+        "topic",
+        Some(base.clone()),
+        vec![change("topic", Some(b"topic\n"), FileMode::Regular)],
+    );
+    let MergeResult::Merged(merged) = Component::merge_branch(
+        path.clone(),
+        "main".into(),
+        "topic".into(),
+        main.clone(),
+        topic.clone(),
+        author(),
+        "Merge topic\n".into(),
+    )
+    .unwrap() else {
+        panic!("expected a divergent merge commit");
+    };
+    assert_eq!(
+        Component::log(path.clone(), merged.clone(), 1)
+            .unwrap()
+            .first()
+            .unwrap()
+            .parents,
+        vec![main.clone(), topic.clone()]
+    );
+    assert!(
+        Component::list_tree(path.clone(), merged.clone())
+            .unwrap()
+            .iter()
+            .any(|entry| entry.path == "topic")
+    );
+    assert!(matches!(
+        Component::merge_branch(
+            path.clone(),
+            "main".into(),
+            "topic".into(),
+            base,
+            topic,
+            author(),
+            "Stale merge\n".into(),
+        ),
+        Err(Error::Conflict(_))
+    ));
+    assert_eq!(Component::resolve(path, "main".into()).unwrap(), merged);
+
+    let (_dir, path) = repo();
+    let base = commit(
+        &path,
+        None,
+        vec![change("file", Some(b"base\n"), FileMode::Regular)],
+    );
+    Component::create_branch(path.clone(), "topic".into(), "HEAD".into()).unwrap();
+    let main = commit(
+        &path,
+        Some(base.clone()),
+        vec![change("file", Some(b"main\n"), FileMode::Regular)],
+    );
+    let topic = commit_branch(
+        &path,
+        "topic",
+        Some(base),
+        vec![change("file", Some(b"topic\n"), FileMode::Regular)],
+    );
+    let MergeResult::Conflicts(conflicts) = Component::merge_branch(
+        path.clone(),
+        "main".into(),
+        "topic".into(),
+        main.clone(),
+        topic,
+        author(),
+        "Conflict\n".into(),
+    )
+    .unwrap() else {
+        panic!("expected an unresolved file conflict");
+    };
+    assert_eq!(
+        conflicts
+            .iter()
+            .map(|conflict| conflict.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["file"]
+    );
+    assert_eq!(Component::resolve(path, "main".into()).unwrap(), main);
+}
+
+#[test]
+fn rebase_replays_commits_with_explicit_committer_and_reports_conflicts() {
+    let (_dir, path) = repo();
+    let base = commit(
+        &path,
+        None,
+        vec![change("base", Some(b"base\n"), FileMode::Regular)],
+    );
+    Component::create_branch(path.clone(), "topic".into(), "HEAD".into()).unwrap();
+    let original = commit_branch(
+        &path,
+        "topic",
+        Some(base.clone()),
+        vec![change("topic", Some(b"topic\n"), FileMode::Regular)],
+    );
+    let onto = commit(
+        &path,
+        Some(base),
+        vec![change("main", Some(b"main\n"), FileMode::Regular)],
+    );
+    let committer = Signature {
+        name: "Rebaser".into(),
+        email: "rebaser@example.invalid".into(),
+        seconds: 1_800_000_000,
+        offset: 0,
+    };
+    let RebaseResult::Rebased(result) = Component::rebase_branch(
+        path.clone(),
+        "topic".into(),
+        original.clone(),
+        onto.clone(),
+        committer.clone(),
+    )
+    .unwrap() else {
+        panic!("expected a clean rebase");
+    };
+    assert_eq!(result.commits.len(), 1);
+    assert_eq!(
+        Component::resolve(path.clone(), "topic".into()).unwrap(),
+        result.tip
+    );
+    let log = Component::log(path.clone(), result.tip, 1).unwrap();
+    let replayed = log.first().unwrap();
+    assert_eq!(replayed.parents, vec![onto]);
+    assert_eq!(replayed.author.name, author().name);
+    assert_eq!(replayed.author.email, author().email);
+    assert_eq!(replayed.author.seconds, author().seconds);
+    assert_eq!(replayed.author.offset, author().offset);
+    assert_eq!(replayed.committer.name, committer.name);
+    assert_eq!(replayed.committer.email, committer.email);
+    assert_eq!(replayed.committer.seconds, committer.seconds);
+    assert_eq!(replayed.committer.offset, committer.offset);
+
+    let (_dir, path) = repo();
+    let base = commit(
+        &path,
+        None,
+        vec![change("file", Some(b"base\n"), FileMode::Regular)],
+    );
+    Component::create_branch(path.clone(), "topic".into(), "HEAD".into()).unwrap();
+    let original = commit_branch(
+        &path,
+        "topic",
+        Some(base.clone()),
+        vec![change("file", Some(b"topic\n"), FileMode::Regular)],
+    );
+    let onto = commit(
+        &path,
+        Some(base),
+        vec![change("file", Some(b"main\n"), FileMode::Regular)],
+    );
+    let RebaseResult::Conflicts(conflict) = Component::rebase_branch(
+        path.clone(),
+        "topic".into(),
+        original.clone(),
+        onto.clone(),
+        author(),
+    )
+    .unwrap() else {
+        panic!("expected an unresolved rebase conflict");
+    };
+    assert_eq!(conflict.commit, original);
+    assert_eq!(conflict.paths, vec!["file"]);
+    assert_eq!(
+        Component::resolve(path.clone(), "topic".into()).unwrap(),
+        original
+    );
+    assert!(matches!(
+        Component::rebase_branch(
+            path.clone(),
+            "topic".into(),
+            onto,
+            original.clone(),
+            author(),
+        ),
+        Err(Error::Conflict(_))
+    ));
+    assert_eq!(Component::resolve(path, "topic".into()).unwrap(), original);
 }
