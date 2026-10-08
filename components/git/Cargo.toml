@@ -16,6 +16,7 @@ crate-type = ["cdylib", "rlib"]
 gix = { version = "=0.88.0", default-features = false, features = ["sha1", "revision", "dirwalk", "merge"] }
 gix-pack = { version = "=0.75.0", features = ["wasm"] }
 filetime = "=0.2.29"
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 wasi = "=0.13.3"
 wit-bindgen = "=0.57.1"
 

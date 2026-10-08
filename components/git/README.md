@@ -6,12 +6,13 @@ WebAssembly component. Git objects, trees, commits, revision parsing and
 packfile decoding run **inside Wasm**. There is no host Git executable,
 subprocess import, libgit2, shell, or custom host service.
 
-This version is a **local Git client**, not a complete replacement for the Git
+This version is a **bounded Git client**, not a complete replacement for the Git
 CLI. It supports SHA-1 bare and working repositories:
 
 | Operation | Behavior |
 | --- | --- |
 | `clone` / `fetch` | Clone or fetch smart HTTP(S) repositories with explicit host, size, and credential bounds |
+| `push` | Push one explicit branch with a mandatory lease, server CAS, and confirmed report-status |
 | `init` | Create a new bare repository with an explicit initial branch |
 | `resolve` | Resolve revision expressions such as `HEAD`, `main~2`, or object IDs |
 | `references` | List sorted refs and peel annotated tags |
@@ -57,8 +58,8 @@ reject `.gitattributes`, configured attribute files, external merge drivers,
 external filters, and submodule entries rather than invoking or emulating them.
 They do not run hooks or write reflogs.
 
-**Not implemented:** network push, SSH, patch application,
-similarity-based rename detection, Git LFS, SHA-256 repositories, signing, hooks,
+**Not implemented:** SSH, patch application,
+similarity-based rename detection, Git LFS, SHA-256 repositories, signing, local hooks,
 filters, and reflogs. Checkout does not recurse into submodules; sparse checkout
 and split indexes are unsupported. On WASI, executable permission bits cannot
 be set on checked-out files, so checking out an executable entry may appear as
@@ -171,7 +172,7 @@ are not persisted in the remote URL or repository configuration.
 Read-only agents should receive read-only filesystem capabilities from the
 embedding host; the component itself does not elevate access.
 
-Smart HTTP currently uses Git protocol v0 upload-pack only. Clone creates a
+Smart HTTP uses Git protocol v0 upload-pack and receive-pack. Clone creates a
 bare repository, installs advertised branches as `refs/remotes/<remote>/...`,
 installs tags, and creates the local default branch when the server advertises
 a default branch. Fetch updates remote-tracking refs by lock-file compare-and-
@@ -181,7 +182,7 @@ pruned. URLs must be `http` or `https`, have no userinfo, query, or fragment,
 and use a hostname explicitly listed in `allowed-hosts`; wildcard entries are
 not accepted. The runtime's WASI HTTP implementation separately controls
 whether and where sockets can be opened. SSH, protocol v2, shallow fetches,
-push, redirects, and non-bare clones are unsupported.
+redirects, and non-bare clones are unsupported.
 
 Every network call requires bounded `network-options`: response and pack
 limits are each 1..=256 MiB, the accepted reference count is 1..=100,000, and
@@ -195,6 +196,68 @@ a ref whose observed value changed during the operation.
 Every function returns `result<_, error>`. A Wasmtime CLI invocation returning
 `err(...)` is an **application failure even when Wasmtime exits with status 0**;
 hosts must inspect the result rather than just the process exit code.
+
+## HTTP push
+
+`push(path, url, options)` reads a local bare or working repository and updates
+exactly one remote `refs/heads/<target-branch>`. It never changes local refs,
+configuration, index, or worktree. `source-branch` and `target-branch` are short
+branch names, not revision expressions, full ref names, wildcard refspecs, or
+`+source:target` syntax. Tags, deletion, mirror/all pushes, multiple ref updates,
+push options, signed pushes, and protocol v2 are unsupported.
+
+Every push has a lease: `expected-tip: none` requires an absent remote branch;
+`some("<full SHA-1>")` requires that exact advertised tip. A mismatch returns
+`stale(observed-tip)` without sending a POST. An existing target must be an
+ancestor of the local source (bounded to 1,000 commits); otherwise
+`non-fast-forward(reference)` is returned without writing. This ancestry check
+uses local history: fetch first when necessary. `force: true` permits a
+non-fast-forward only with an explicit, matching existing-tip lease. It does
+not bypass server protection.
+
+The component discovers `git-receive-pack` capabilities before encoding a
+request. It requires `report-status`, requests `atomic` when advertised, and
+sends the observed old object ID for the server's lock-protected compare-and-
+swap. Single-ref pushes are atomic without the multi-ref `atomic` capability.
+Concurrent changes after discovery are server rejections rather than silent
+overwrites. The server must enable smart HTTP receive-pack; bare native Git
+fixtures use `git config http.receivepack true`.
+
+`pushed(reference)` is returned only after HTTP 200, the expected Content-Type,
+and a complete packet-line report with both `unpack ok` and the exact target's
+`ok` status. A matching lease and already-identical advertised tip returns
+`up-to-date(reference)` without writing. `rejected` means the server reported
+unpack/ref rejection; hook messages and all other untrusted server diagnostics
+are deliberately omitted, because they may echo credentials. Authentication
+and HTTP/protocol failures remain explicit errors. **Any error after POST is
+indeterminate:** the server may have applied the update before its response was
+lost or malformed. Reread the remote tip before deciding whether to retry.
+
+`max-request-bytes` bounds the complete encoded command plus pack (1..=256 MiB).
+`network.max-pack-bytes` bounds both the encoded pack and the sum of raw object
+bytes. Encoding completes and all bounds are checked before the final write
+request is sent. Packs are SHA-1-checksummed v2 packs with individual zlib
+objects, no deltas or thin packs, containing the entire source closure, including
+trees, blobs and all commit parents. Object IDs are verified while encoding.
+This intentionally favors interoperability over bandwidth: shared remote
+objects are resent, with a maximum of 1,000 commits and 1,000,000 objects.
+Gitlink targets belong to separate repositories and are not traversed.
+Decompression still requires runtime memory/fuel limits for untrusted local
+objects. The response/reference limits in `network-options` also apply.
+
+Only the supplied URL is used; Git push URLs, credential helpers, environment
+tokens and Git-config credentials are never consulted. Explicit Basic/bearer
+credentials apply only to this call and are not persisted. Redirects, including
+cross-origin redirects, fail without contacting their destination or forwarding
+authentication. Use HTTPS for real credentials: HTTP sends them in plaintext.
+The exact guest hostname allowlist is an additional check, not a network grant;
+the embedding runtime controls outbound HTTP permissions and should restrict
+the intended scheme/host/port. No custom host service or subprocess is imported.
+
+Protected refs, branch policies, authorization, server hooks, object quotas,
+and non-fast-forward policy are enforced by the remote server. The component
+does not run local hooks or promise to bypass remote policy; force/lease cannot
+override a rejecting hook or a server configured with `receive.denyNonFastForwards`.
 
 ## Committing safely
 
@@ -276,3 +339,8 @@ binary diagnostics, empty files, raw non-UTF-8 text, unusual quoted paths,
 multiple hunks, context bounds, and EOF markers. Linear-history blame and clean
 rename attribution are compared with native `git blame --line-porcelain`,
 including packed-object reads and traversal/range limits.
+Smart HTTP tests use a loopback-only native `git http-backend` fixture and
+invoke clone/fetch/push inside Wasmtime, covering authentication, redirects,
+denied network, malformed responses, pack/request bounds, leases, races,
+non-fast-forwards and server hook rejection. Native `git ls-remote`,
+`git fsck --strict`, and remote object content provide interoperability oracles.

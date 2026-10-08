@@ -173,6 +173,36 @@ interface repository {
         updated: list<reference>,
     }
 
+    /// One explicit local-branch to remote-branch update; no refspec magic.
+    record push-options {
+        /// Short local branch name, not a revision expression or full refspec.
+        source-branch: string,
+        /// Short remote branch name. Tags, deletion, and arbitrary refs are unsupported.
+        target-branch: string,
+        /// Lease: none requires an absent target; some requires this full SHA-1 tip.
+        expected-tip: option<string>,
+        /// Permit a non-fast-forward only with an explicit matching existing-tip lease.
+        force: bool,
+        /// Maximum entire receive-pack request bytes, 1..=268435456.
+        max-request-bytes: u64,
+        /// Explicit transport credentials, host allowlist, and response/pack bounds.
+        network: network-options,
+    }
+
+    /// Push outcomes. Only pushed confirms a complete successful server status report.
+    variant push-result {
+        /// Server confirmed the single branch update.
+        pushed(reference),
+        /// The advertised target already equals the local tip and the lease matches.
+        up-to-date(reference),
+        /// Advertisement did not match the lease; contains the observed tip or none.
+        stale(option<string>),
+        /// Target is not an ancestor of the source; no write request was sent.
+        non-fast-forward(reference),
+        /// Server refused unpacking or the ref update. Untrusted messages are redacted.
+        rejected,
+    }
+
     /// A network-specific failure. Messages never include credentials or authorization headers.
     variant network-error {
         authentication-required,
@@ -341,6 +371,14 @@ interface repository {
         remote-name: string,
         options: network-options,
     ) -> result<fetch-result, error>;
+
+    /// Push one branch over smart HTTP(S) protocol v0 with mandatory report-status.
+    /// Checks the lease before writing and sends the advertised old ID for server CAS.
+    /// No local refs/config/index/worktree are changed. Redirects are never followed.
+    /// A transport/protocol failure after POST is indeterminate: reread the remote
+    /// before retrying. Protected-ref policy and hooks are enforced by the server.
+    push: func(path: string, url: string, options: push-options)
+        -> result<push-result, error>;
 }
 
 /// A callable Git client, requiring only standard WASI capabilities.

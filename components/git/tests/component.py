@@ -4,6 +4,7 @@ Git is used only as an interoperability oracle and fixture builder, never by
 the component. Requires Python 3, Wasmtime, wasm-tools, and Git on PATH.
 """
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -30,17 +31,26 @@ class GitHTTPServer(ThreadingHTTPServer):
     def __init__(self, root, auth=None):
         self.root = Path(root)
         self.auth = auth
+        self.requests = []
+        self.request_content_lengths = []
         self.seen_authorization = []
         self.fault = None
         self.redirect_url = None
         self.pause_post = False
         self.post_received = threading.Event()
         self.release_post = threading.Event()
+        self.pause_push = False
+        self.push_received = threading.Event()
+        self.release_push = threading.Event()
         super().__init__(("127.0.0.1", 0), GitHTTPHandler)
 
 
 class GitHTTPHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(30)
 
     def log_message(self, *_args):
         pass
@@ -64,6 +74,10 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
     def dispatch(self):
         fixture = self.server
         fixture.seen_authorization.append(self.headers.get("Authorization"))
+        request_length = int(self.headers.get("Content-Length", "0"))
+        fixture.requests.append((self.command, self.path))
+        fixture.request_content_lengths.append(request_length)
+        request_body = self.rfile.read(request_length) if request_length else b""
         if fixture.auth:
             expected = "Basic " + base64.b64encode(
                 f"{fixture.auth[0]}:{fixture.auth[1]}".encode()
@@ -80,7 +94,9 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
         if fixture.fault == "http-error":
             self.reply(500, "text/plain", b"fixture failure\n")
             return
-        if fixture.fault == "redirect":
+        if fixture.fault == "redirect" or (
+            fixture.fault == "redirect-post" and self.command == "POST"
+        ):
             self.reply(
                 302,
                 "text/plain",
@@ -89,6 +105,16 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             )
             return
         path = urlsplit(self.path).path
+        if fixture.fault == "post-http-error" and self.command == "POST":
+            self.reply(500, "text/plain", b"fixture push failure\n")
+            return
+        if fixture.fault == "malformed-report" and self.command == "POST":
+            self.reply(
+                200,
+                "application/x-git-receive-pack-result",
+                b"not a pkt-line\n",
+            )
+            return
         if fixture.fault == "oversized" and path.endswith("/info/refs"):
             self.reply(
                 200,
@@ -100,8 +126,6 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             self.reply(200, "application/x-git-upload-pack-advertisement", b"0003")
             return
 
-        request_length = int(self.headers.get("Content-Length", "0"))
-        request_body = self.rfile.read(request_length) if request_length else b""
         env = os.environ.copy()
         env.update(
             {
@@ -120,6 +144,16 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
                 "SERVER_PORT": str(fixture.server_address[1]),
             }
         )
+        if (
+            self.command == "POST"
+            and path.endswith("/git-receive-pack")
+            and fixture.pause_push
+        ):
+            fixture.push_received.set()
+            if not fixture.release_push.wait(30):
+                self.reply(500, "text/plain", b"fixture push pause timed out\n")
+                return
+            fixture.pause_push = False
         result = subprocess.run(
             ["git", "http-backend"],
             input=request_body,
@@ -185,8 +219,8 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
         self.reply(status, content_type, body, headers)
 
 
-def run(*args):
-    result = subprocess.run(args, check=True, capture_output=True, text=True)
+def run(*args, timeout=120):
+    result = subprocess.run(args, check=True, capture_output=True, text=True, timeout=timeout)
     return result.stdout.strip()
 
 
@@ -227,12 +261,22 @@ def exercise_network_component(directory, invoke, ok, error, native_at):
     run("git", "-C", str(worktree), "tag", "-a", "v1.0", "-m", "Release one")
     run("git", "-C", str(worktree), "push", "--quiet", "origin", "v1.0")
     feature = run("git", "-C", str(worktree), "rev-parse", "refs/heads/feature/nested")
+    run("git", "--git-dir", str(remote), "config", "http.receivepack", "true")
     run("git", "--git-dir", str(remote), "gc", "--prune=now")
     run("git", "--git-dir", str(remote), "pack-refs", "--all")
     run("git", "--git-dir", str(remote), "fsck", "--strict", "--full")
 
     empty_remote = projects / "empty.git"
     run("git", "init", "--bare", "--initial-branch=main", str(empty_remote))
+    run("git", "--git-dir", str(empty_remote), "config", "http.receivepack", "true")
+    run(
+        "git",
+        "--git-dir",
+        str(empty_remote),
+        "config",
+        "core.hooksPath",
+        str(empty_remote / "hooks"),
+    )
     server = GitHTTPServer(projects)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -248,8 +292,53 @@ def exercise_network_component(directory, invoke, ok, error, native_at):
     def fetch_expr(destination, opts=None):
         return f'fetch({string("/repos/" + destination)}, "origin", {opts or network_options()})'
 
+    def push_expr(
+        project,
+        source,
+        target,
+        expected=None,
+        force=False,
+        request_bytes=16777216,
+        opts=None,
+        url=None,
+        path="/repos/network.git",
+    ):
+        lease = f"some({string(expected)})" if expected else "none"
+        push_options = (
+            f"{{source-branch: {string(source)}, target-branch: {string(target)}, "
+            f"expected-tip: {lease}, force: {str(force).lower()}, "
+            f"max-request-bytes: {request_bytes}, network: {opts or network_options()}}}"
+        )
+        return (
+            f"push({string(path)}, "
+            f"{string(url or base_url + '/' + project)}, {push_options})"
+        )
+
     def git_dir(repository, *args):
         return native_at(Path(directory) / repository, *args)
+
+    def push_posts():
+        return [
+            request
+            for request in server.requests
+            if request[0] == "POST"
+            and urlsplit(request[1]).path.endswith("/git-receive-pack")
+        ]
+
+    def assert_push_endpoint(project, fixture=server, since=0):
+        endpoint = f"/{project}/git-receive-pack"
+        advertisement = f"/{project}/info/refs"
+        requests = [
+            (method, urlsplit(path).path, urlsplit(path).query)
+            for method, path in fixture.requests[since:]
+        ]
+        allowed = {
+            ("GET", advertisement, "service=git-receive-pack"),
+            ("POST", endpoint, ""),
+        }
+        assert requests and all(request in allowed for request in requests), requests
+        assert ("GET", advertisement, "service=git-receive-pack") in requests, requests
+        assert ("POST", endpoint, "") in requests, requests
 
     try:
         # HTTP imports require the explicit Wasmtime host capability.
@@ -265,6 +354,7 @@ def exercise_network_component(directory, invoke, ok, error, native_at):
             ],
             capture_output=True,
             text=True,
+            timeout=120,
         )
         assert denied.returncode != 0, denied.stdout
         assert "http" in (denied.stderr + denied.stdout).lower(), denied.stderr
@@ -318,6 +408,57 @@ def exercise_network_component(directory, invoke, ok, error, native_at):
             f'clone("/repos/auth-bearer.git", {string(auth_url)}, "origin", '
             f"{network_options(credentials=bearer)})"
         )
+        auth_push_start = len(auth_server.requests)
+        auth_rejected = invoke(
+            push_expr("source.git", "main", "push-unauthenticated", url=auth_url),
+        )
+        assert auth_rejected.startswith("err(network(authentication-required))"), auth_rejected
+        basic_push = ok(
+            push_expr(
+                "source.git",
+                "main",
+                "push-auth-basic",
+                opts=network_options(credentials=basic),
+                url=auth_url,
+            )
+        )
+        assert "pushed(" in basic_push and "push-auth-basic" in basic_push, basic_push
+        assert "secret" not in basic_push
+        bearer_push = ok(
+            push_expr(
+                "source.git",
+                "main",
+                "push-auth-bearer",
+                opts=network_options(credentials=bearer),
+                url=auth_url,
+            )
+        )
+        assert "pushed(" in bearer_push and "push-auth-bearer" in bearer_push, bearer_push
+        assert "secret" not in bearer_push
+        assert_push_endpoint("source.git", auth_server, auth_push_start)
+        assert git_dir(remote, "rev-parse", "refs/heads/push-auth-basic") == first
+        assert git_dir(remote, "rev-parse", "refs/heads/push-auth-bearer") == first
+
+        auth_server.seen_authorization.clear()
+        auth_server.requests.clear()
+        auth_server.request_content_lengths.clear()
+        server.fault = "redirect-post"
+        server.redirect_url = auth_url
+        redirected_push_start = len(server.requests)
+        redirected_push = invoke(
+            push_expr(
+                "source.git",
+                "main",
+                "push-redirect",
+                opts=network_options(credentials=basic),
+            )
+        )
+        assert redirected_push.startswith("err(network(http-status(302)))"), redirected_push
+        assert_push_endpoint("source.git", server, redirected_push_start)
+        assert auth_server.requests == [], auth_server.requests
+        assert auth_server.seen_authorization == [], auth_server.seen_authorization
+        server.fault = None
+
         auth_server.seen_authorization.clear()
         server.fault = "redirect"
         server.redirect_url = auth_url
@@ -390,7 +531,148 @@ def exercise_network_component(directory, invoke, ok, error, native_at):
         )
         git_dir("network.git", "fsck", "--strict", "--full")
 
-        # The component refuses non-bare repositories rather than risking dirty files.
+        push_posts_before = len(push_posts())
+        denied_push = invoke(
+            push_expr(
+                "empty.git",
+                "main",
+                "denied-host",
+                opts=network_options(hosts=["example.invalid"]),
+            )
+        )
+        assert denied_push.startswith("err(invalid-input("), denied_push
+        assert len(push_posts()) == push_posts_before
+
+        denied_push_http = subprocess.run(
+            [
+                WASMTIME,
+                "run",
+                "--dir",
+                f"{directory}::/repos",
+                "--invoke",
+                push_expr("empty.git", "main", "http-denied"),
+                str(WASM),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert denied_push_http.returncode != 0, denied_push_http.stdout
+        assert "http" in (denied_push_http.stderr + denied_push_http.stdout).lower()
+        assert len(push_posts()) == push_posts_before
+
+        invalid_request = invoke(
+            push_expr("empty.git", "main", "invalid-request", request_bytes=0)
+        )
+        assert invalid_request.startswith("err(invalid-input("), invalid_request
+        assert len(push_posts()) == push_posts_before
+        oversized_request_limit = invoke(
+            push_expr(
+                "empty.git",
+                "main",
+                "oversized-request-limit",
+                request_bytes=256 * 1024 * 1024 + 1,
+            )
+        )
+        assert oversized_request_limit.startswith("err(invalid-input("), oversized_request_limit
+        assert len(push_posts()) == push_posts_before
+        pack_limited = invoke(
+            push_expr(
+                "empty.git",
+                "main",
+                "pack-limited",
+                opts=network_options(pack=1),
+            )
+        )
+        assert not pack_limited.startswith("ok("), pack_limited
+        assert len(push_posts()) == push_posts_before
+        request_limited = invoke(
+            push_expr("empty.git", "main", "request-limited", request_bytes=1)
+        )
+        assert not request_limited.startswith("ok("), request_limited
+        assert len(push_posts()) == push_posts_before
+
+        git_dir("network.git", "update-ref", "refs/heads/push-main", first)
+        git_dir("network.git", "update-ref", "refs/heads/push-feature", feature)
+        new_branch_start = len(server.requests)
+        new_branch = ok(
+            push_expr("empty.git", "push-main", "published")
+        )
+        assert_push_endpoint("empty.git", server, new_branch_start)
+        assert "pushed(" in new_branch and "published" in new_branch, new_branch
+        assert first in new_branch
+        empty_ls_remote = run(
+            "git", "ls-remote", str(empty_remote), "refs/heads/published"
+        )
+        assert empty_ls_remote == f"{first}\trefs/heads/published", empty_ls_remote
+        assert git_dir(empty_remote, "show", "refs/heads/published:readme.txt") == "base"
+        git_dir(empty_remote, "fsck", "--strict", "--full")
+
+        git_dir("network.git", "update-ref", "refs/heads/push-main", second)
+        updated_branch_start = len(server.requests)
+        updated_branch = ok(
+            push_expr(
+                "empty.git",
+                "push-main",
+                "published",
+                expected=first,
+            )
+        )
+        assert_push_endpoint("empty.git", server, updated_branch_start)
+        assert "pushed(" in updated_branch and second in updated_branch, updated_branch
+        assert git_dir(empty_remote, "rev-parse", "refs/heads/published") == second
+        assert git_dir(empty_remote, "show", "refs/heads/published:readme.txt") == "second"
+        up_to_date = ok(
+            push_expr(
+                "empty.git",
+                "push-main",
+                "published",
+                expected=second,
+            )
+        )
+        assert "up-to-date(" in up_to_date and "published" in up_to_date, up_to_date
+
+        post_count = len(push_posts())
+        stale_lease = invoke(
+            push_expr(
+                "empty.git",
+                "push-main",
+                "published",
+                expected=first,
+            )
+        )
+        assert stale_lease.startswith("ok(stale(") and second in stale_lease, stale_lease
+        assert len(push_posts()) == post_count
+
+        non_fast_forward = ok(
+            push_expr(
+                "empty.git",
+                "push-feature",
+                "published",
+                expected=second,
+            )
+        )
+        assert "non-fast-forward(" in non_fast_forward, non_fast_forward
+        assert git_dir(empty_remote, "rev-parse", "refs/heads/published") == second
+        forced_start = len(server.requests)
+        forced = ok(
+            push_expr(
+                "empty.git",
+                "push-feature",
+                "published",
+                expected=second,
+                force=True,
+            )
+        )
+        assert_push_endpoint("empty.git", server, forced_start)
+        assert "pushed(" in forced and "published" in forced, forced
+        assert feature in forced
+        assert git_dir(empty_remote, "rev-parse", "refs/heads/published") == feature
+        assert run(
+            "git", "ls-remote", str(empty_remote), "refs/heads/published"
+        ) == f"{feature}\trefs/heads/published"
+        git_dir(empty_remote, "fsck", "--strict", "--full")
+
         dirty_worktree = Path(directory) / "dirty-worktree"
         run("git", "clone", "--quiet", str(remote), str(dirty_worktree))
         (dirty_worktree / "readme.txt").write_text("local dirty change\n")
@@ -398,7 +680,183 @@ def exercise_network_component(directory, invoke, ok, error, native_at):
             f'fetch("/repos/dirty-worktree", "origin", {network_options()})'
         )
         assert dirty_fetch.startswith("err(unsupported("), dirty_fetch
+
+        dirty_staged = dirty_worktree / "staged-only.txt"
+        dirty_untracked = dirty_worktree / "untracked-only.txt"
+        dirty_staged.write_text("staged but not committed\n")
+        run("git", "-C", str(dirty_worktree), "add", "staged-only.txt")
+        dirty_untracked.write_text("untracked and not committed\n")
+
+        def dirty_git(*args):
+            return run("git", "-C", str(dirty_worktree), *args)
+
+        dirty_head = dirty_git("rev-parse", "HEAD")
+        dirty_status = dirty_git("status", "--porcelain")
+        dirty_index = dirty_git("diff", "--cached", "--binary")
+        dirty_worktree_diff = dirty_git("diff", "--binary")
+        dirty_index_entries = dirty_git("ls-files", "--stage")
+        dirty_push = ok(
+            push_expr(
+                "source.git",
+                "main",
+                "working-tree-clean",
+                path="/repos/dirty-worktree",
+            )
+        )
+        assert "pushed(" in dirty_push and dirty_head in dirty_push, dirty_push
+        assert dirty_git("rev-parse", "HEAD") == dirty_head
+        assert dirty_git("status", "--porcelain") == dirty_status
+        assert dirty_git("diff", "--cached", "--binary") == dirty_index
+        assert dirty_git("diff", "--binary") == dirty_worktree_diff
+        assert dirty_git("ls-files", "--stage") == dirty_index_entries
         assert (dirty_worktree / "readme.txt").read_text() == "local dirty change\n"
+        assert dirty_staged.read_text() == "staged but not committed\n"
+        assert dirty_untracked.read_text() == "untracked and not committed\n"
+        assert git_dir(remote, "rev-parse", "refs/heads/working-tree-clean") == dirty_head
+        assert git_dir(
+            remote, "ls-tree", "-r", "--name-only", "refs/heads/working-tree-clean"
+        ) == "readme.txt"
+        assert git_dir(remote, "show", "refs/heads/working-tree-clean:readme.txt") == "second"
+        git_dir(remote, "fsck", "--strict", "--full")
+
+        large_worktree = Path(directory) / "large-push-worktree"
+        run("git", "clone", "--quiet", str(Path(directory) / "network.git"), str(large_worktree))
+        run("git", "-C", str(large_worktree), "switch", "--quiet", "-c", "large-push")
+        # Fixed-size SHA-256 blocks make this fixture deterministic and poorly compressible.
+        payload = b"".join(
+            hashlib.sha256(index.to_bytes(8, "big")).digest()
+            for index in range(8192)
+        )
+        assert len(payload) > 64 * 1024
+        (large_worktree / "incompressible.bin").write_bytes(payload)
+        run("git", "-C", str(large_worktree), "add", "incompressible.bin")
+        run(
+            "git",
+            "-C",
+            str(large_worktree),
+            "-c",
+            "user.name=Oracle",
+            "-c",
+            "user.email=oracle@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "Large streaming push",
+        )
+        run(
+            "git",
+            "-C",
+            str(large_worktree),
+            "remote",
+            "add",
+            "http",
+            f"{base_url}/source.git",
+        )
+        native_large_push_start = len(server.requests)
+        run("git", "-C", str(large_worktree), "push", "--quiet", "http", "large-push")
+        assert_push_endpoint("source.git", server, native_large_push_start)
+        fetched_large = ok(fetch_expr("network.git"))
+        assert "refs/remotes/origin/large-push" in fetched_large, fetched_large
+        large_tip = run("git", "-C", str(large_worktree), "rev-parse", "HEAD")
+        git_dir("network.git", "update-ref", "refs/heads/large-push", large_tip)
+        large_push_start = len(server.requests)
+        large_result = ok(
+            push_expr("empty.git", "large-push", "large-payload")
+        )
+        assert_push_endpoint("empty.git", server, large_push_start)
+        large_post_indexes = [
+            index
+            for index, (method, path) in enumerate(server.requests[large_push_start:], large_push_start)
+            if method == "POST"
+            and urlsplit(path).path == "/empty.git/git-receive-pack"
+        ]
+        assert len(large_post_indexes) == 1, server.requests[large_push_start:]
+        assert server.request_content_lengths[large_post_indexes[0]] > 64 * 1024
+        assert "pushed(" in large_result and large_tip in large_result, large_result
+        assert run(
+            "git", "ls-remote", str(empty_remote), "refs/heads/large-payload"
+        ) == f"{large_tip}\trefs/heads/large-payload"
+        stored_payload = subprocess.run(
+            [
+                "git",
+                f"--git-dir={empty_remote}",
+                "show",
+                f"{large_tip}:incompressible.bin",
+            ],
+            check=True,
+            capture_output=True,
+            timeout=120,
+        ).stdout
+        assert stored_payload == payload
+        assert (large_worktree / "incompressible.bin").read_bytes() == payload
+        git_dir(empty_remote, "fsck", "--strict", "--full")
+
+        hook = empty_remote / "hooks" / "pre-receive"
+        hook.write_text(
+            "#!/bin/sh\n"
+            "cat >/dev/null\n"
+            "printf 'private hook output must not be exposed\\n'\n"
+            "exit 1\n"
+        )
+        hook.chmod(0o755)
+        rejected = invoke(
+            push_expr(
+                "empty.git",
+                "push-main",
+                "hook-rejected",
+            )
+        )
+        assert rejected == "ok(rejected)", rejected
+        assert "private hook output" not in rejected
+        assert run(
+            "git", "ls-remote", str(empty_remote), "refs/heads/hook-rejected"
+        ) == ""
+        hook.unlink()
+
+        server.fault = "post-http-error"
+        post_http_error = invoke(
+            push_expr("empty.git", "push-main", "post-http-error")
+        )
+        assert post_http_error.startswith("err(network(http-status(500)))"), post_http_error
+        assert len(push_posts()) > post_count
+        server.fault = "malformed-report"
+        malformed_report = invoke(
+            push_expr("empty.git", "push-main", "malformed-report")
+        )
+        assert malformed_report.startswith("err(network(malformed-response("), malformed_report
+        server.fault = None
+
+        git_dir(remote, "update-ref", "refs/heads/push-race", first)
+        server.pause_push = True
+        server.push_received.clear()
+        server.release_push.clear()
+        race_output = []
+
+        def race_push():
+            race_output.append(
+                invoke(
+                    push_expr(
+                        "source.git",
+                        "push-feature",
+                        "push-race",
+                        expected=first,
+                        force=True,
+                    )
+                )
+            )
+
+        push_thread = threading.Thread(target=race_push)
+        push_thread.start()
+        try:
+            assert server.push_received.wait(20), "push never reached receive-pack"
+            git_dir(remote, "update-ref", "refs/heads/push-race", second, first)
+        finally:
+            server.release_push.set()
+            push_thread.join(timeout=30)
+        assert not push_thread.is_alive(), "racing push did not finish"
+        assert race_output == ["ok(rejected)"], race_output
+        assert git_dir(remote, "rev-parse", "refs/heads/push-race") == second
+        git_dir(remote, "fsck", "--strict", "--full")
 
         # Held locks survive a failed fetch and prevent the remote-tracking update.
         (worktree / "readme.txt").write_text("third\n")
@@ -437,7 +895,7 @@ def main():
             if granted:
                 args += ["--dir", f"{directory}::/repos"]
             args += ["--invoke", expression, str(WASM)]
-            return run(*args)
+            return run(*args, timeout=120)
 
         def ok(expression):
             output = invoke(expression)
@@ -999,8 +1457,8 @@ def main():
         exercise_network_component(directory, invoke, ok, error, native_at)
 
     print(
-        "Git component: Wasm clone/fetch, packs, refs, patches/blame, merge/rebase, "
-        "CAS writes, and Git interoperability passed."
+        "Git component: Wasm clone/fetch/push, packs, refs, patches/blame, "
+        "merge/rebase, CAS writes, and Git interoperability passed."
     )
 
 
