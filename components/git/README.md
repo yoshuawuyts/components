@@ -18,6 +18,9 @@ CLI. It supports SHA-1 bare and working repositories:
 | `list-tree` | List sorted recursive leaf entries, including modes and gitlinks |
 | `read-file` | Read binary blobs or symlink target bytes at a revision |
 | `diff` | Compare two trees by path, object ID and file mode |
+| `diff-renames` | Compare trees with deterministic exact-content rename pairing |
+| `unified-diff` | Emit bounded Git-format textual patches with modes and rename metadata |
+| `blame` | Attribute a bounded line range through linear history and clean renames |
 | `create-branch` | Create a branch without replacing an existing ref |
 | `commit-files` | Commit explicit additions, replacements and deletions with optimistic concurrency |
 | `merge-branch` | Fast-forward or three-way merge branches with conflict-path reporting |
@@ -53,8 +56,8 @@ reject `.gitattributes`, configured attribute files, external merge drivers,
 external filters, and submodule entries rather than invoking or emulating them.
 They do not run hooks or write reflogs.
 
-**Not implemented:** network clone/fetch/push, SSH, credentials, arbitrary
-text patches, rename detection, Git LFS, SHA-256 repositories, signing, hooks,
+**Not implemented:** network clone/fetch/push, SSH, credentials, patch application,
+similarity-based rename detection, Git LFS, SHA-256 repositories, signing, hooks,
 filters, and reflogs. Checkout does not recurse into submodules; sparse checkout
 and split indexes are unsupported. On WASI, executable permission bits cannot
 be set on checked-out files, so checking out an executable entry may appear as
@@ -63,6 +66,60 @@ UTF-8; binary file contents and messages are preserved.
 Colon-leading revision expressions (including index lookups such as `:file`)
 are explicitly rejected; tree lookups such as `HEAD:file` are supported.
 There is deliberately no arbitrary command or shell escape export.
+
+## Patches, renames, and blame
+
+The original `diff` API remains a path-by-path tree comparison, with no rename
+inference. `diff-renames` pairs deleted and added paths with identical blob IDs
+and compatible file types (regular/executable files are compatible). Multiple
+identical candidates are paired deterministically in path order. This is
+**exact-content detection only**, not Git's similarity scoring: edited renames,
+copies, and renames that replace an existing path are reported as ordinary
+changes. Each result includes old/new entries (IDs, paths and modes) and an
+explicit `renamed` flag.
+
+`unified-diff` accepts `patch-options` with `context-lines` (0..=100),
+`max-files` (1..=1000), `max-bytes` (1..=16,777,216), and `detect-renames`.
+It returns one `file-patch` per change, including the same typed metadata,
+a `binary` flag, and patch bytes. Concatenate the byte arrays in result order
+to produce a Git-format patch. Text need not be UTF-8. Paths are C-quoted
+where necessary, modes and empty file additions/deletions are represented in
+headers, and unterminated lines carry `\ No newline at end of file` markers.
+Regular-file/symlink type changes emit delete/add sections. Patches with zero
+context require Git's `apply --unidiff-zero` option, just like `git diff -U0`.
+
+NUL-containing blobs are explicitly marked binary (the entire blob is scanned).
+Changed binary contents produce only `Binary files ... differ` diagnostics,
+**not applicable binary deltas**. Binary content additions/deletions are likewise
+diagnostic-only; exact-content binary renames and mode-only changes still have
+applicable metadata. Submodules and special modes return `unsupported`.
+Diffing uses raw stored blobs and gitoxide's in-memory histogram/slider diff:
+attributes, textconv, configured diff drivers and external filters are never
+invoked or emulated. These patches intentionally describe object bytes rather
+than filtered working-tree bytes.
+
+`blame` accepts `blame-options` with one-based `start-line`, `max-lines`
+(1..=100,000), and `max-commits` (1..=1000). Each returned line contains its
+requested line number, introducing commit ID, and original path/line number.
+The requested range is clipped to EOF; line 1 of an empty regular file returns
+an empty list, while other out-of-range starts fail. Unchanged lines are mapped
+back through line edits and unambiguous exact-content renames, including mode
+changes. Binary files, symlinks, merge traversal, and ambiguous rename origins
+return `unsupported`. Blame does not infer edited renames, copies, or moved
+blocks, and treats line terminators as part of a line's content. It is not an
+implementation of Git's `-M`, `-C`, whitespace-ignore or merge blame heuristics.
+Root lines retain the root commit ID (no synthetic boundary ID).
+
+All these operations fail the whole request rather than returning truncated
+patches or fabricated boundary attribution when a bound is exceeded. Patch
+and blame inputs are limited to 16 MiB per loaded blob and 64 MiB total loaded
+blob bytes per call; textual blobs are limited to 100,000 lines. Blame also
+limits the sum of visited tree leaf entries to 1,000,000. The history bound
+counts the tip and inspected parents; unresolved attribution fails at the
+boundary. Object decompression still needs host memory/fuel limits as described
+below. Read-only patch/blame paths support Git-valid UTF-8 names including
+tabs, newlines, quotes, backslashes and colons; write APIs retain their portable
+path restrictions.
 
 ## Build and use
 
@@ -181,3 +238,9 @@ oracle. It covers binary files, file modes, branch conflicts, merge and rebase
 success/conflicts/stale tips, held locks, denied filesystem access, packed
 objects/refs, commit graphs, writes after packing, and `git fsck --strict`
 interoperability.
+It also feeds the exact Wasm-emitted patch bytes to native `git apply --index`
+and compares resulting trees, covering clean renames, mode/type changes,
+binary diagnostics, empty files, raw non-UTF-8 text, unusual quoted paths,
+multiple hunks, context bounds, and EOF markers. Linear-history blame and clean
+rename attribution are compared with native `git blame --line-porcelain`,
+including packed-object reads and traversal/range limits.

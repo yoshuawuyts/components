@@ -54,6 +54,52 @@ interface repository {
         after: option<entry>,
     }
 
+    /// A tree change with optional exact-content rename inference.
+    record file-difference {
+        before: option<entry>,
+        after: option<entry>,
+        renamed: bool,
+    }
+
+    /// Bounds for raw-object unified patches; no attributes or external drivers are used.
+    record patch-options {
+        /// Symmetric hunk context, 0..=100.
+        context-lines: u32,
+        /// Maximum changed files, 1..=1000. Exceeding a bound fails the whole call.
+        max-files: u32,
+        /// Maximum total patch bytes, 1..=16777216.
+        max-bytes: u32,
+        /// Pair deleted/added paths with identical blob IDs and compatible file types.
+        detect-renames: bool,
+    }
+
+    /// One file's metadata and Git-format patch bytes (including headers).
+    record file-patch {
+        difference: file-difference,
+        /// NUL-containing blobs are binary. Changed binary contents produce a
+        /// diagnostic, not an applicable binary delta; exact renames remain applicable.
+        binary: bool,
+        patch: list<u8>,
+    }
+
+    /// Attribution of a requested one-based line to its introducing commit.
+    record blame-line {
+        line-number: u32,
+        commit: string,
+        original-path: string,
+        original-line: u32,
+    }
+
+    /// Bounds for linear-history blame, including exact-content renames.
+    record blame-options {
+        /// One-based starting line; 1 is also accepted for an empty file.
+        start-line: u32,
+        /// Maximum requested lines, 1..=100000.
+        max-lines: u32,
+        /// Maximum visited commits, 1..=1000. Unresolved attribution fails.
+        max-commits: u32,
+    }
+
     /// The kind of a staged or unstaged path change.
     enum change-kind {
         added,
@@ -136,6 +182,24 @@ interface repository {
 
     /// Compare two revision trees, including file-mode changes.
     diff: func(path: string, before: string, after: string) -> result<list<difference>, error>;
+
+    /// Compare trees with deterministic exact-content rename detection.
+    /// Ambiguous candidates pair in path order; edited renames and copies are not inferred.
+    diff-renames: func(path: string, before: string, after: string, max-files: u32)
+        -> result<list<file-difference>, error>;
+
+    /// Emit unified raw-byte patches, including modes, quoted paths and EOF markers.
+    /// Each blob is limited to 16 MiB/100000 lines, and total loaded blobs to 64 MiB.
+    /// Submodules are unsupported. Binary content changes are explicitly diagnostic-only.
+    unified-diff: func(path: string, before: string, after: string, options: patch-options)
+        -> result<list<file-patch>, error>;
+
+    /// Attribute raw text lines through linear history and unambiguous clean renames.
+    /// Merge traversal, binary files and ambiguous rename origins are unsupported.
+    /// Limits: 16 MiB/100000 lines per blob, 64 MiB total loaded blobs and
+    /// 1000000 total tree entries. No partial/boundary attribution is returned.
+    blame: func(path: string, revision: string, file: string, options: blame-options)
+        -> result<list<blame-line>, error>;
 
     /// Create a branch at a commit; never overwrite an existing reference.
     create-branch: func(path: string, branch: string, revision: string) -> result<_, error>;
