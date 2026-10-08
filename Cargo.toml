@@ -1,9 +1,14 @@
 [workspace]
-members = ["components/*"]
+members = ["components/*", "support/memmap2"]
 # `testing/` is a separate workspace (wit-bindgen 0.46 + async, wasm-only). It
 # must not be part of the native `cargo check --all` / `cargo test --all` runs.
 exclude = ["testing"]
 resolver = "2"
+
+# Gitoxide reads loose objects, packfiles and references through memmap2.
+# WASI has no mmap syscall; retain native mappings and use bounded reads on WASI.
+[patch.crates-io]
+memmap2 = { path = "support/memmap2" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

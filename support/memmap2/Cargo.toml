@@ -1,0 +1,13 @@
+[package]
+name = "memmap2"
+version = "0.9.11"
+edition = "2024"
+license = "Apache-2.0"
+description = "Read-only WASI compatibility adapter for gitoxide"
+publish = false
+
+[target.'cfg(not(target_os = "wasi"))'.dependencies]
+native = { package = "memmap2", git = "https://github.com/RazrFalcon/memmap2-rs", rev = "7d76ad3157383db5670fd7e012f44de42aa7444b" }
+
+[lints]
+workspace = true

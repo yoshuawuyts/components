@@ -1,0 +1,107 @@
+package yoshuawuyts:git@0.1.0;
+
+/// Self-contained local Git operations. Paths are WASI-visible repository paths.
+interface repository {
+    /// Explicit author/committer identity; no host Git configuration is required.
+    record signature {
+        name: string,
+        email: string,
+        seconds: s64,
+        offset: s32,
+    }
+
+    /// A decoded commit. Message bytes are preserved without UTF-8 conversion.
+    record commit {
+        id: string,
+        tree: string,
+        parents: list<string>,
+        author: signature,
+        committer: signature,
+        message: list<u8>,
+    }
+
+    /// A leaf entry in a recursive tree listing.
+    record entry {
+        path: string,
+        id: string,
+        mode: u32,
+    }
+
+    /// A named reference and its peeled object identifier.
+    record reference {
+        name: string,
+        id: string,
+    }
+
+    /// File modes accepted when creating commits.
+    enum file-mode {
+        regular,
+        executable,
+        symlink,
+    }
+
+    /// Insert/replace a blob, or remove a path when contents is none.
+    record change {
+        path: string,
+        contents: option<list<u8>>,
+        mode: file-mode,
+    }
+
+    /// Tree-level difference. No rename inference or text conversion is applied.
+    record difference {
+        path: string,
+        before: option<entry>,
+        after: option<entry>,
+    }
+
+    /// All failures are returned explicitly, including corrupt repositories.
+    variant error {
+        invalid-input(string),
+        repository(string),
+        unsupported(string),
+        conflict(string),
+    }
+
+    /// Initialize a new bare repository. Refuses an existing destination.
+    init: func(path: string, branch: string) -> result<_, error>;
+
+    /// Resolve a Git revision expression to an object identifier.
+    /// Colon-leading expressions (including index lookups) are unsupported.
+    resolve: func(path: string, revision: string) -> result<string, error>;
+
+    /// List references, peeling annotated tags to their targets.
+    references: func(path: string) -> result<list<reference>, error>;
+
+    /// Read at most limit commits along the first-parent chain (1..=1000).
+    log: func(path: string, revision: string, limit: u32) -> result<list<commit>, error>;
+
+    /// Recursively list leaves in a revision's tree, sorted by path.
+    list-tree: func(path: string, revision: string) -> result<list<entry>, error>;
+
+    /// Read raw blob bytes from a revision; symlinks return their target bytes.
+    read-file: func(path: string, revision: string, file: string) -> result<list<u8>, error>;
+
+    /// Compare two revision trees, including file-mode changes.
+    diff: func(path: string, before: string, after: string) -> result<list<difference>, error>;
+
+    /// Create a branch at a commit; never overwrite an existing reference.
+    create-branch: func(path: string, branch: string, revision: string) -> result<_, error>;
+
+    /// Atomically commit explicit file changes to a branch in a bare repository.
+    /// expected-parent is the branch's current commit, or none for a new branch.
+    /// Rejects stale parents, empty changes, duplicate paths, and no-op commits.
+    /// No index, working tree, hooks, filters, or external programs are involved.
+    commit-files: func(
+        path: string,
+        branch: string,
+        expected-parent: option<string>,
+        changes: list<change>,
+        author: signature,
+        message: string,
+    ) -> result<string, error>;
+}
+
+/// A callable Git client, requiring only standard WASI capabilities.
+world git {
+    export repository;
+}
