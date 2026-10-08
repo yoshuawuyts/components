@@ -14,7 +14,9 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 gix = { version = "=0.88.0", default-features = false, features = ["sha1", "revision", "dirwalk", "merge"] }
+gix-pack = { version = "=0.75.0", features = ["wasm"] }
 filetime = "=0.2.29"
+wasi = "=0.13.3"
 wit-bindgen = "=0.57.1"
 
 [dev-dependencies]

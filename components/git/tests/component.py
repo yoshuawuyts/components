@@ -8,15 +8,181 @@ import json
 import os
 from pathlib import Path
 import re
+import base64
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import subprocess
 import sys
 import tempfile
+import threading
+from urllib.parse import urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[3]
 WASM = ROOT / "target/wasm32-wasip2/release/git.wasm"
 WASMTIME = os.environ.get("WASMTIME", "wasmtime")
 AUTHOR = '{name: "Agent", email: "agent@example.invalid", seconds: 1700000000, offset: 0}'
+
+
+class GitHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, root, auth=None):
+        self.root = Path(root)
+        self.auth = auth
+        self.seen_authorization = []
+        self.fault = None
+        self.redirect_url = None
+        self.pause_post = False
+        self.post_received = threading.Event()
+        self.release_post = threading.Event()
+        super().__init__(("127.0.0.1", 0), GitHTTPHandler)
+
+
+class GitHTTPHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *_args):
+        pass
+
+    def do_GET(self):
+        self.dispatch()
+
+    def do_POST(self):
+        self.dispatch()
+
+    def reply(self, status, content_type, body, headers=()):
+        self.send_response(status)
+        if content_type:
+            self.send_header("Content-Type", content_type)
+        for name, value in headers:
+            self.send_header(name, value)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def dispatch(self):
+        fixture = self.server
+        fixture.seen_authorization.append(self.headers.get("Authorization"))
+        if fixture.auth:
+            expected = "Basic " + base64.b64encode(
+                f"{fixture.auth[0]}:{fixture.auth[1]}".encode()
+            ).decode()
+            expected_bearer = "Bearer " + fixture.auth[1]
+            if self.headers.get("Authorization") not in (expected, expected_bearer):
+                self.reply(
+                    401,
+                    "text/plain",
+                    b"authentication required\n",
+                    [("WWW-Authenticate", 'Basic realm="fixture"')],
+                )
+                return
+        if fixture.fault == "http-error":
+            self.reply(500, "text/plain", b"fixture failure\n")
+            return
+        if fixture.fault == "redirect":
+            self.reply(
+                302,
+                "text/plain",
+                b"redirects are not followed\n",
+                [("Location", fixture.redirect_url)],
+            )
+            return
+        path = urlsplit(self.path).path
+        if fixture.fault == "oversized" and path.endswith("/info/refs"):
+            self.reply(
+                200,
+                "application/x-git-upload-pack-advertisement",
+                b"x" * 1024,
+            )
+            return
+        if fixture.fault == "malformed" and path.endswith("/info/refs"):
+            self.reply(200, "application/x-git-upload-pack-advertisement", b"0003")
+            return
+
+        request_length = int(self.headers.get("Content-Length", "0"))
+        request_body = self.rfile.read(request_length) if request_length else b""
+        env = os.environ.copy()
+        env.update(
+            {
+                "GIT_PROJECT_ROOT": str(fixture.root),
+                "GIT_HTTP_EXPORT_ALL": "1",
+                "PATH_INFO": path,
+                "QUERY_STRING": urlsplit(self.path).query,
+                "REQUEST_METHOD": self.command,
+                "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+                "CONTENT_LENGTH": str(request_length),
+                "REMOTE_ADDR": self.client_address[0],
+                "REMOTE_USER": fixture.auth[0] if fixture.auth else "",
+                "AUTH_TYPE": "Basic" if fixture.auth else "",
+                "SERVER_PROTOCOL": self.protocol_version,
+                "SERVER_NAME": "127.0.0.1",
+                "SERVER_PORT": str(fixture.server_address[1]),
+            }
+        )
+        result = subprocess.run(
+            ["git", "http-backend"],
+            input=request_body,
+            capture_output=True,
+            env=env,
+            timeout=30,
+        )
+        if result.returncode:
+            self.reply(500, "text/plain", b"git http-backend failed\n")
+            return
+        output = result.stdout
+        separator = output.find(b"\r\n\r\n")
+        separator_length = 4
+        if separator < 0:
+            separator = output.find(b"\n\n")
+            separator_length = 2
+        if separator < 0:
+            self.reply(500, "text/plain", b"invalid CGI response\n")
+            return
+        raw_headers = output[:separator].splitlines()
+        body = output[separator + separator_length :]
+        status = 200
+        headers = []
+        for line in raw_headers:
+            name, _, value = line.partition(b":")
+            if not _:
+                continue
+            if name.lower() == b"status":
+                status = int(value.strip().split(maxsplit=1)[0])
+            elif name.lower() not in (b"content-length", b"connection", b"transfer-encoding"):
+                headers.append((name.decode("ascii"), value.decode("latin1").strip()))
+        content_type = next(
+            (value for name, value in headers if name.lower() == "content-type"),
+            "application/octet-stream",
+        )
+        if fixture.fault == "bad-pack" and self.command == "POST":
+            body = bytearray(body)
+            offset = 0
+            last_pack_byte = None
+            while offset + 4 <= len(body):
+                length = int(bytes(body[offset : offset + 4]), 16)
+                if length == 0:
+                    offset += 4
+                    continue
+                end = offset + length
+                if end > len(body):
+                    break
+                if length > 5 and body[offset + 4] == 1:
+                    last_pack_byte = end - 1
+                offset = end
+            if last_pack_byte is not None:
+                body[last_pack_byte] ^= 1
+                body = bytes(body)
+            else:
+                self.reply(500, "text/plain", b"fixture could not corrupt pack\n")
+                return
+        if self.command == "POST" and fixture.pause_post:
+            fixture.post_received.set()
+            if not fixture.release_post.wait(30):
+                self.reply(500, "text/plain", b"fixture pause timed out\n")
+                return
+            fixture.pause_post = False
+        self.reply(status, content_type, body, headers)
 
 
 def run(*args):
@@ -28,12 +194,238 @@ def string(value):
     return json.dumps(value, ensure_ascii=False)
 
 
+def network_options(response=16777216, pack=16777216, hosts=None, credentials="none"):
+    hosts = hosts or ["127.0.0.1"]
+    rendered_hosts = "[" + ", ".join(string(host) for host in hosts) + "]"
+    return (
+        f"{{max-response-bytes: {response}, max-pack-bytes: {pack}, max-refs: 1000, "
+        f"allowed-hosts: {rendered_hosts}, credentials: {credentials}}}"
+    )
+
+
+def exercise_network_component(directory, invoke, ok, error, native_at):
+    projects = Path(directory) / "http-projects"
+    projects.mkdir()
+    remote = projects / "source.git"
+    worktree = Path(directory) / "http-worktree"
+    run("git", "init", "--bare", "--initial-branch=main", str(remote))
+    run("git", "init", "--initial-branch=main", str(worktree))
+    run("git", "-C", str(worktree), "config", "user.name", "Oracle")
+    run("git", "-C", str(worktree), "config", "user.email", "oracle@example.invalid")
+    (worktree / "readme.txt").write_text("base\n")
+    run("git", "-C", str(worktree), "add", "readme.txt")
+    run("git", "-C", str(worktree), "commit", "--quiet", "-m", "Base")
+    run("git", "-C", str(worktree), "remote", "add", "origin", str(remote))
+    run("git", "-C", str(worktree), "push", "--quiet", "-u", "origin", "main")
+    first = run("git", "-C", str(worktree), "rev-parse", "HEAD")
+
+    run("git", "-C", str(worktree), "switch", "--quiet", "-c", "feature/nested")
+    (worktree / "feature.txt").write_text("feature\n")
+    run("git", "-C", str(worktree), "add", "feature.txt")
+    run("git", "-C", str(worktree), "commit", "--quiet", "-m", "Feature")
+    run("git", "-C", str(worktree), "push", "--quiet", "-u", "origin", "feature/nested")
+    run("git", "-C", str(worktree), "tag", "-a", "v1.0", "-m", "Release one")
+    run("git", "-C", str(worktree), "push", "--quiet", "origin", "v1.0")
+    feature = run("git", "-C", str(worktree), "rev-parse", "refs/heads/feature/nested")
+    run("git", "--git-dir", str(remote), "gc", "--prune=now")
+    run("git", "--git-dir", str(remote), "pack-refs", "--all")
+    run("git", "--git-dir", str(remote), "fsck", "--strict", "--full")
+
+    empty_remote = projects / "empty.git"
+    run("git", "init", "--bare", "--initial-branch=main", str(empty_remote))
+    server = GitHTTPServer(projects)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+
+    def clone_expr(destination, project="source.git", opts=None):
+        return (
+            f"clone({string('/repos/' + destination)}, "
+            f"{string(base_url + '/' + project)}, \"origin\", "
+            f"{opts or network_options()})"
+        )
+
+    def fetch_expr(destination, opts=None):
+        return f'fetch({string("/repos/" + destination)}, "origin", {opts or network_options()})'
+
+    def git_dir(repository, *args):
+        return native_at(Path(directory) / repository, *args)
+
+    try:
+        # HTTP imports require the explicit Wasmtime host capability.
+        denied = subprocess.run(
+            [
+                WASMTIME,
+                "run",
+                "--dir",
+                f"{directory}::/repos",
+                "--invoke",
+                clone_expr("http-denied.git"),
+                str(WASM),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert denied.returncode != 0, denied.stdout
+        assert "http" in (denied.stderr + denied.stdout).lower(), denied.stderr
+
+        # The caller's hostname allowlist is enforced before any HTTP request.
+        denied_host = invoke(
+            clone_expr("unlisted.git", opts=network_options(hosts=["example.invalid"]))
+        )
+        assert denied_host.startswith("err(invalid-input("), denied_host
+        assert not (Path(directory) / "unlisted.git").exists()
+
+        cloned = ok(clone_expr("network.git"))
+        assert "default-branch: \"main\"" in cloned, cloned
+        cloned_repo = Path(directory) / "network.git"
+        assert git_dir("network.git", "rev-parse", "refs/heads/main") == first
+        assert git_dir("network.git", "rev-parse", "refs/remotes/origin/main") == first
+        assert git_dir("network.git", "rev-parse", "refs/remotes/origin/feature/nested") == feature
+        assert git_dir("network.git", "rev-parse", "refs/tags/v1.0") == git_dir(
+            remote, "rev-parse", "refs/tags/v1.0"
+        )
+        assert git_dir("network.git", "ls-tree", "-r", "--name-only", "refs/remotes/origin/main") == (
+            "readme.txt"
+        )
+        git_dir("network.git", "fsck", "--strict", "--full")
+        git_dir("network.git", "update-ref", "refs/tags/v1.0", feature)
+
+        empty = ok(clone_expr("empty.git", project="empty.git"))
+        assert "references: []" in empty, empty
+        assert git_dir("empty.git", "symbolic-ref", "HEAD") == "refs/heads/main"
+        assert git_dir("empty.git", "for-each-ref") == ""
+
+        # Authentication is supplied only to this call and never stored in config or output.
+        auth_server = GitHTTPServer(projects, ("agent", "secret"))
+        auth_thread = threading.Thread(target=auth_server.serve_forever, daemon=True)
+        auth_thread.start()
+        auth_url = f"http://127.0.0.1:{auth_server.server_address[1]}/source.git"
+        unauthenticated = invoke(
+            f'clone("/repos/unauthenticated.git", {string(auth_url)}, "origin", '
+            f"{network_options()})"
+        )
+        assert unauthenticated.startswith("err(network(authentication-required))"), unauthenticated
+        basic = 'some({username: some("agent"), password: some("secret"), bearer-token: none})'
+        basic_result = ok(
+            f'clone("/repos/auth-basic.git", {string(auth_url)}, "origin", '
+            f"{network_options(credentials=basic)})"
+        )
+        assert "secret" not in basic_result
+        assert "secret" not in (Path(directory) / "auth-basic.git" / "config").read_text()
+        bearer = 'some({username: none, password: none, bearer-token: some("secret")})'
+        ok(
+            f'clone("/repos/auth-bearer.git", {string(auth_url)}, "origin", '
+            f"{network_options(credentials=bearer)})"
+        )
+        auth_server.seen_authorization.clear()
+        server.fault = "redirect"
+        server.redirect_url = auth_url
+        redirected = invoke(
+            f'clone("/repos/redirect.git", {string(base_url + "/source.git")}, "origin", '
+            f"{network_options(credentials=basic)})"
+        )
+        assert redirected.startswith("err(network(http-status(302)))"), redirected
+        assert auth_server.seen_authorization == [], auth_server.seen_authorization
+        server.fault = None
+        auth_server.shutdown()
+        auth_server.server_close()
+        auth_thread.join(timeout=5)
+
+        # HTTP status, bounded response, malformed packet, and corrupt pack errors.
+        server.fault = "http-error"
+        status_error = invoke(clone_expr("http-error.git"))
+        assert status_error.startswith("err(network(http-status(500)))"), status_error
+        server.fault = "oversized"
+        oversized = invoke(
+            clone_expr("oversized.git", opts=network_options(response=128, pack=128))
+        )
+        assert oversized.startswith("err(network(response-too-large))"), oversized
+        server.fault = "malformed"
+        malformed = invoke(clone_expr("malformed.git"))
+        assert malformed.startswith("err(network(malformed-response("), malformed
+        server.fault = "bad-pack"
+        corrupt = invoke(clone_expr("corrupt-pack.git"))
+        assert corrupt.startswith("err(network(malformed-response("), corrupt
+        assert "checksum" in corrupt.lower(), corrupt
+        server.fault = None
+
+        # A second clone snapshots the original remote-tracking refs for a stale-CAS test.
+        ok(clone_expr("stale.git"))
+        run("git", "-C", str(worktree), "switch", "--quiet", "main")
+        (worktree / "readme.txt").write_text("second\n")
+        run("git", "-C", str(worktree), "commit", "--quiet", "-am", "Second")
+        run("git", "-C", str(worktree), "push", "--quiet", "origin", "main")
+        run("git", "-C", str(worktree), "tag", "-a", "v2.0", "-m", "Release two")
+        run("git", "-C", str(worktree), "push", "--quiet", "origin", "v2.0")
+        second = run("git", "-C", str(worktree), "rev-parse", "HEAD")
+
+        # Change a tracking ref while upload-pack is in flight; CAS must reject it.
+        server.pause_post = True
+        server.post_received.clear()
+        server.release_post.clear()
+        fetch_output = []
+
+        def stale_fetch():
+            fetch_output.append(invoke(fetch_expr("stale.git")))
+
+        fetch_thread = threading.Thread(target=stale_fetch)
+        fetch_thread.start()
+        assert server.post_received.wait(20), "fetch never reached upload-pack"
+        git_dir("stale.git", "update-ref", "refs/remotes/origin/main", feature, first)
+        server.release_post.set()
+        fetch_thread.join(timeout=30)
+        assert not fetch_thread.is_alive(), "stale fetch did not finish"
+        assert fetch_output and fetch_output[0].startswith("err(conflict("), fetch_output
+        assert git_dir("stale.git", "rev-parse", "refs/remotes/origin/main") == feature
+
+        # Normal fetch updates remote-tracking refs but not local branches or tags.
+        fetched = ok(fetch_expr("network.git"))
+        assert "refs/remotes/origin/main" in fetched, fetched
+        assert git_dir("network.git", "rev-parse", "refs/remotes/origin/main") == second
+        assert git_dir("network.git", "rev-parse", "refs/heads/main") == first
+        assert git_dir("network.git", "rev-parse", "refs/tags/v1.0") == feature
+        assert git_dir("network.git", "rev-parse", "refs/tags/v2.0") == git_dir(
+            remote, "rev-parse", "refs/tags/v2.0"
+        )
+        git_dir("network.git", "fsck", "--strict", "--full")
+
+        # The component refuses non-bare repositories rather than risking dirty files.
+        dirty_worktree = Path(directory) / "dirty-worktree"
+        run("git", "clone", "--quiet", str(remote), str(dirty_worktree))
+        (dirty_worktree / "readme.txt").write_text("local dirty change\n")
+        dirty_fetch = invoke(
+            f'fetch("/repos/dirty-worktree", "origin", {network_options()})'
+        )
+        assert dirty_fetch.startswith("err(unsupported("), dirty_fetch
+        assert (dirty_worktree / "readme.txt").read_text() == "local dirty change\n"
+
+        # Held locks survive a failed fetch and prevent the remote-tracking update.
+        (worktree / "readme.txt").write_text("third\n")
+        run("git", "-C", str(worktree), "commit", "--quiet", "-am", "Third")
+        run("git", "-C", str(worktree), "push", "--quiet", "origin", "main")
+        third = run("git", "-C", str(worktree), "rev-parse", "HEAD")
+        lock = cloned_repo / "refs/remotes/origin/main.lock"
+        lock.write_text("held by another writer")
+        lock_error = invoke(fetch_expr("network.git"))
+        assert lock_error.startswith("err(conflict("), lock_error
+        assert lock.read_text() == "held by another writer"
+        assert git_dir("network.git", "rev-parse", "refs/remotes/origin/main") == second
+        lock.unlink()
+        git_dir("network.git", "fsck", "--strict", "--full")
+    finally:
+        server.release_post.set()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def main():
     run("wasm-tools", "validate", "--features", "all", str(WASM))
     wit = run("wasm-tools", "component", "wit", str(WASM))
     imports = re.findall(r"^\s*import ([^;]+);", wit, re.MULTILINE)
     assert imports and all(name.startswith("wasi:") for name in imports), imports
-    assert not any(":http/" in name or ":sockets/" in name for name in imports)
+    assert any(name.startswith("wasi:http/outgoing-handler") for name in imports), imports
     assert "export yoshuawuyts:git/repository@0.1.0;" in wit
 
     # Keep fixtures under the worktree, including Windows CI runs.
@@ -41,7 +433,7 @@ def main():
         repo = Path(directory) / "agent.git"
 
         def invoke(expression, granted=True):
-            args = [WASMTIME, "run"]
+            args = [WASMTIME, "run", "-S", "http"]
             if granted:
                 args += ["--dir", f"{directory}::/repos"]
             args += ["--invoke", expression, str(WASM)]
@@ -604,7 +996,12 @@ def main():
         )
         native_at(rebase_conflict_repo, "fsck", "--strict", "--full")
 
-    print("Git component: Wasm patches/blame, merge/rebase, CAS writes, and Git interoperability passed.")
+        exercise_network_component(directory, invoke, ok, error, native_at)
+
+    print(
+        "Git component: Wasm clone/fetch, packs, refs, patches/blame, merge/rebase, "
+        "CAS writes, and Git interoperability passed."
+    )
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ CLI. It supports SHA-1 bare and working repositories:
 
 | Operation | Behavior |
 | --- | --- |
+| `clone` / `fetch` | Clone or fetch smart HTTP(S) repositories with explicit host, size, and credential bounds |
 | `init` | Create a new bare repository with an explicit initial branch |
 | `resolve` | Resolve revision expressions such as `HEAD`, `main~2`, or object IDs |
 | `references` | List sorted refs and peel annotated tags |
@@ -56,7 +57,7 @@ reject `.gitattributes`, configured attribute files, external merge drivers,
 external filters, and submodule entries rather than invoking or emulating them.
 They do not run hooks or write reflogs.
 
-**Not implemented:** network clone/fetch/push, SSH, credentials, patch application,
+**Not implemented:** network push, SSH, patch application,
 similarity-based rename detection, Git LFS, SHA-256 repositories, signing, hooks,
 filters, and reflogs. Checkout does not recurse into submodules; sparse checkout
 and split indexes are unsupported. On WASI, executable permission bits cannot
@@ -141,24 +142,55 @@ inside it. Use a fresh directory name; `init` rejects existing destinations.
 
 ```sh
 mkdir -p target/agent-repositories
-wasmtime run --dir target/agent-repositories::/repos \
+wasmtime run -S http --dir target/agent-repositories::/repos \
   --invoke 'init("/repos/example.git", "main")' \
   target/wasm32-wasip2/release/git.wasm
 
-wasmtime run --dir target/agent-repositories::/repos \
+wasmtime run -S http --dir target/agent-repositories::/repos \
   --invoke 'commit-files("/repos/example.git", "main", none, [{path: "hello.txt", contents: some([104, 105, 10]), mode: regular}], {name: "Agent", email: "agent@example.invalid", seconds: 1700000000, offset: 0}, "Initial commit")' \
   target/wasm32-wasip2/release/git.wasm
 
-wasmtime run --dir target/agent-repositories::/repos \
+wasmtime run -S http --dir target/agent-repositories::/repos \
   --invoke 'log("/repos/example.git", "HEAD", 10)' \
   target/wasm32-wasip2/release/git.wasm
 ```
 
 For an agent runtime, generate bindings from the WIT world and link standard
 WASI imports. Preopen only the intended repository directory (or its parent for
-`init`). Do not inherit environment variables or grant network access.
+`init`). Do not inherit environment variables. This component imports the
+standard WASI HTTP outgoing-handler, so even local calls need a runtime that
+links that interface. `wasmtime -S http` enables outbound HTTP; use an embedding
+host with an outbound-handler policy if the component must be instantiated
+without network access. Clone/fetch also require the URL hostname in the
+operation's exact `allowed-hosts` list. That guest-side check complements, but
+does not replace, the embedding runtime's network policy. The component never
+looks up credentials in environment
+variables, helpers, or Git configuration, and never follows redirects. Basic
+credentials or a bearer token may be supplied explicitly for one call; they
+are not persisted in the remote URL or repository configuration.
 Read-only agents should receive read-only filesystem capabilities from the
 embedding host; the component itself does not elevate access.
+
+Smart HTTP currently uses Git protocol v0 upload-pack only. Clone creates a
+bare repository, installs advertised branches as `refs/remotes/<remote>/...`,
+installs tags, and creates the local default branch when the server advertises
+a default branch. Fetch updates remote-tracking refs by lock-file compare-and-
+swap, adds missing tags without replacing existing tags, and never changes
+local branches, the index, or worktree files. Deleted remote refs are not
+pruned. URLs must be `http` or `https`, have no userinfo, query, or fragment,
+and use a hostname explicitly listed in `allowed-hosts`; wildcard entries are
+not accepted. The runtime's WASI HTTP implementation separately controls
+whether and where sockets can be opened. SSH, protocol v2, shallow fetches,
+push, redirects, and non-bare clones are unsupported.
+
+Every network call requires bounded `network-options`: response and pack
+limits are each 1..=256 MiB, the accepted reference count is 1..=100,000, and
+each pack is limited to 1,000,000 objects.
+The component rejects oversized or malformed protocol data, requires the
+advertised `side-band-64k` capability, and delegates pack checksum, index, and
+object verification to gitoxide before updating refs. A fetch may leave
+unreachable objects if a later ref compare-and-swap fails, but will not replace
+a ref whose observed value changed during the operation.
 
 Every function returns `result<_, error>`. A Wasmtime CLI invocation returning
 `err(...)` is an **application failure even when Wasmtime exits with status 0**;
