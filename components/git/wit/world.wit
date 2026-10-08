@@ -11,7 +11,7 @@ interface repository {
     }
 
     /// A decoded commit. Message bytes are preserved without UTF-8 conversion.
-    record commit {
+    record commit-record {
         id: string,
         tree: string,
         parents: list<string>,
@@ -54,6 +54,22 @@ interface repository {
         after: option<entry>,
     }
 
+    /// The kind of a staged or unstaged path change.
+    enum change-kind {
+        added,
+        modified,
+        removed,
+        type-changed,
+    }
+
+    /// A path's staged and unstaged state. Untracked files have no staged or unstaged kind.
+    record file-status {
+        path: string,
+        staged: option<change-kind>,
+        unstaged: option<change-kind>,
+        untracked: bool,
+    }
+
     /// All failures are returned explicitly, including corrupt repositories.
     variant error {
         invalid-input(string),
@@ -73,7 +89,7 @@ interface repository {
     references: func(path: string) -> result<list<reference>, error>;
 
     /// Read at most limit commits along the first-parent chain (1..=1000).
-    log: func(path: string, revision: string, limit: u32) -> result<list<commit>, error>;
+    log: func(path: string, revision: string, limit: u32) -> result<list<commit-record>, error>;
 
     /// Recursively list leaves in a revision's tree, sorted by path.
     list-tree: func(path: string, revision: string) -> result<list<entry>, error>;
@@ -86,6 +102,32 @@ interface repository {
 
     /// Create a branch at a commit; never overwrite an existing reference.
     create-branch: func(path: string, branch: string, revision: string) -> result<_, error>;
+
+    /// Switch a working repository to a branch or commit.
+    /// Refuses to overwrite modified tracked or colliding untracked files unless force is true.
+    checkout: func(path: string, revision: string, force: bool) -> result<_, error>;
+
+    /// Return staged, unstaged, and untracked paths. Untracked files honor Git ignore rules.
+    status: func(path: string) -> result<list<file-status>, error>;
+
+    /// Stage existing files from the working tree into the index.
+    add: func(path: string, paths: list<string>) -> result<_, error>;
+
+    /// Remove unchanged tracked files from the working tree and stage deletion.
+    /// Refuses to remove paths with unstaged working-tree changes.
+    remove: func(path: string, paths: list<string>) -> result<_, error>;
+
+    /// Reset paths in the index to `HEAD`, leaving working-tree files untouched.
+    reset: func(path: string, paths: list<string>) -> result<_, error>;
+
+    /// Create a commit from the index and update the currently checked-out branch.
+    /// expected-parent is HEAD's current commit, or none for an unborn branch.
+    commit: func(
+        path: string,
+        expected-parent: option<string>,
+        author: signature,
+        message: string,
+    ) -> result<string, error>;
 
     /// Atomically commit explicit file changes to a branch in a bare repository.
     /// expected-parent is the branch's current commit, or none for a new branch.

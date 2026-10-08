@@ -156,6 +156,53 @@ def main():
             "unsupported",
         )
 
+        def native_worktree(*args):
+            return run("git", "-C", str(worktree), *args)
+
+        assert native_worktree("status", "--porcelain") == ""
+        (worktree / ".gitignore").write_text("*.ignored\n")
+        (worktree / "staged.txt").write_text("staged\n")
+        (worktree / "untracked.txt").write_text("untracked\n")
+        (worktree / "hidden.ignored").write_text("ignored\n")
+        ok('add("/repos/worktree", [".gitignore", "staged.txt"])')
+        staged = ok('status("/repos/worktree")')
+        assert 'path: ".gitignore"' in staged and "staged: some(added)" in staged, staged
+        assert 'path: "hidden.ignored"' not in staged, staged
+        assert native_worktree("diff", "--cached", "--name-only").splitlines() == [
+            ".gitignore",
+            "staged.txt",
+        ]
+        assert "A  .gitignore" in native_worktree("status", "--porcelain")
+        ok('reset("/repos/worktree", ["staged.txt"])')
+        assert native_worktree("diff", "--cached", "--name-only").splitlines() == [
+            ".gitignore"
+        ]
+        status = ok('status("/repos/worktree")')
+        assert 'path: "staged.txt"' in status and "untracked: true" in status, status
+        ok('add("/repos/worktree", ["staged.txt"])')
+        working_commit = ok(
+            f'commit("/repos/worktree", some("{second}"), {AUTHOR}, "Working-tree commit")'
+        )
+        assert native_worktree("rev-parse", "HEAD") == working_commit[4:-2]
+        assert native_worktree("diff", "--cached", "--name-only") == ""
+        status = native_worktree("status", "--porcelain")
+        assert status == "?? untracked.txt", repr(status)
+        native_worktree("branch", "feature", second)
+        (worktree / "hidden.ignored").unlink()
+
+        ok('remove("/repos/worktree", ["staged.txt"])')
+        assert not (worktree / "staged.txt").exists()
+        assert native_worktree("diff", "--cached", "--name-status").splitlines() == [
+            "D\tstaged.txt"
+        ]
+        (worktree / "src" / "file").write_bytes(b"local edit")
+        error('checkout("/repos/worktree", "feature", false)', "conflict")
+        ok('checkout("/repos/worktree", "feature", true)')
+        assert native_worktree("rev-parse", "HEAD") == second
+        status = native_worktree("status", "--porcelain")
+        assert status == "?? untracked.txt", repr(status)
+        native_worktree("fsck", "--strict", "--full")
+
     print("Git component: Wasm execution, packed objects, CAS writes, and Git interoperability passed.")
 
 
