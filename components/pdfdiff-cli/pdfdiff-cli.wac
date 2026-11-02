@@ -1,0 +1,17 @@
+// Compose the `pdfdiff-cli` command with the `pdfdiff` library into a single
+// runnable component that exports `wasi:cli/run`.
+//
+// The package names are bound to built `.wasm` files via
+// `wac compose --dep <name>=<path>`; see the `build-pdfdiff-cli` recipe in the
+// repo `justfile`.
+package yoshuawuyts:pdfdiff-cmd;
+
+let lib = new yoshuawuyts:pdfdiff { ... };
+
+let cli = new yoshuawuyts:pdfdiff-cli {
+    "yoshuawuyts:pdfdiff/types@0.1.0": lib["yoshuawuyts:pdfdiff/types@0.1.0"],
+    "yoshuawuyts:pdfdiff/diff@0.1.0": lib["yoshuawuyts:pdfdiff/diff@0.1.0"],
+    ...
+};
+
+export cli["wasi:cli/run@0.2.0"];

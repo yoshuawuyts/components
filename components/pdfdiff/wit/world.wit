@@ -1,0 +1,51 @@
+package yoshuawuyts:pdfdiff@0.1.0;
+
+/// Types shared by every interface in this package.
+interface types {
+    /// Options controlling how two PDFs are compared and how the resulting
+    /// diff is rendered.
+    record options {
+        /// Number of unchanged lines to show around each change. The
+        /// equivalent of `diff -U <n>`; `diff -u` uses `3`.
+        context-lines: u32,
+        /// Name of the old document, printed in the `---` header line.
+        old-label: string,
+        /// Name of the new document, printed in the `+++` header line.
+        new-label: string,
+        /// Collapse runs of whitespace within a line into a single space and
+        /// drop blank lines before comparing. This hides changes that only
+        /// affect layout, such as different spacing or paragraph gaps.
+        ignore-whitespace: bool,
+    }
+}
+
+/// Compare the text of two PDF documents.
+interface diff {
+    use types.{options};
+
+    /// Extract the text of both PDFs and compare it line by line.
+    ///
+    /// Returns a unified diff (the `.diff` / `.patch` format produced by
+    /// `diff -u`), or an empty string when the text of both documents is
+    /// identical. Each hunk header names the page the change is on, such as
+    /// `@@ -4,7 +4,7 @@ page 2`; the page is taken from the new document,
+    /// or from the old document for hunks that only remove lines.
+    ///
+    /// Only text is compared: changes to images, fonts, colors, or
+    /// positioning that don't change the extracted text are not reported.
+    /// Returns an error prefixed with `old:` or `new:` when a document
+    /// can't be parsed.
+    compare: func(old: list<u8>, new: list<u8>, options: options) -> result<string, string>;
+
+    /// Extract the text of a PDF, one string per page, in page order.
+    ///
+    /// This is the text `compare` diffs, after normalizing line endings and
+    /// trimming trailing whitespace from each line.
+    extract-text: func(pdf: list<u8>) -> result<list<string>, string>;
+}
+
+/// Implemented by any component that diffs PDF documents.
+world pdfdiff {
+    export types;
+    export diff;
+}

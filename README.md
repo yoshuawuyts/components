@@ -14,6 +14,8 @@
 | `textsearch` | Regex find/replace over text, powered by `ripgrep`'s engine |
 | `color`      | Convert between CSS color spaces (sRGB, HSL, HWB, Lab, LCH, Oklab, Oklch, Okhsl) |
 | `slidedeck`  | Generate PowerPoint (`.pptx`) presentations from slide descriptions or Markdown |
+| `pdfdiff`    | Diff the text of two PDF documents as a unified `.diff` |
+| `pdfdiff-cli` | `diff`-style command line front end for `pdfdiff` |
 
 ## Interfaces
 
