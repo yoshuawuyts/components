@@ -1,0 +1,22 @@
+[package]
+name = "pdfdiff-cli"
+license = "Apache-2.0"
+repository = "https://github.com/yoshuawuyts/components"
+documentation = "https://docs.rs/pdfdiff-cli"
+description = "Wasm Components"
+readme = "README.md"
+edition = "2021"
+keywords = []
+categories = []
+authors = ["Yoshua Wuyts <rust@yosh.is>"]
+publish = false
+
+[[bin]]
+name = "pdfdiff-cli"
+path = "src/main.rs"
+
+[dependencies]
+wit-bindgen = "0.36"
+
+[lints]
+workspace = true

@@ -1,0 +1,10 @@
+package yoshuawuyts:pdfdiff-cli;
+
+/// A `diff`-style command line front end for the `pdfdiff` component.
+///
+/// The command reads PDFs from preopened directories and imports the
+/// `diff` interface to compare them. Compose it with `pdfdiff` to get a
+/// single runnable component; see `pdfdiff-cli.wac`.
+world cli {
+    import yoshuawuyts:pdfdiff/diff@0.1.0;
+}

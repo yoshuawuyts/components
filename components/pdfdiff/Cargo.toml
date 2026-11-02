@@ -1,0 +1,27 @@
+[package]
+name = "pdfdiff"
+license = "Apache-2.0"
+repository = "https://github.com/yoshuawuyts/components"
+documentation = "https://docs.rs/pdfdiff"
+description = "Wasm Components"
+readme = "README.md"
+edition = "2021"
+keywords = []
+categories = []
+authors = ["Yoshua Wuyts <rust@yosh.is>"]
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+
+[dependencies]
+wit-bindgen = "0.36"
+pdf-extract = "0.9"
+similar = "2"
+
+[dev-dependencies]
+
+[lints]
+workspace = true
